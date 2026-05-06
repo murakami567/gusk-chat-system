@@ -63,8 +63,10 @@ def start_chat(data: StartChatRequest):
     db.commit()
     db.refresh(room)
 
+    room_id = room.id
+
     system_message = Message(
-        chat_room_id=room.id,
+        chat_room_id=room_id,
         sender_type="system",
         message="お問い合わせありがとうございます。内容を確認します。",
     )
@@ -75,7 +77,7 @@ def start_chat(data: StartChatRequest):
     db.close()
 
     return {
-        "chat_room_id": room.id,
+        "chat_room_id": room_id,
     }
 
 
