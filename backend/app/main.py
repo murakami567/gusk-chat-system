@@ -1,7 +1,16 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from datetime import datetime
+from sqlalchemy.orm import Session
+
+from .database import Base
+from .database import SessionLocal
+from .database import engine
+from .models import ChatRoom
+from .models import Message
+
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
@@ -13,13 +22,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-chat_rooms = []
-chat_messages = []
-
 
 class StartChatRequest(BaseModel):
-    property_name: str = "未設定"
-    room_number: str = "未設定"
+    property_name: str
+    room_number: str
     guest_contact: str | None = None
     category: str | None = None
 
@@ -29,9 +35,12 @@ class MessageRequest(BaseModel):
     message: str
 
 
-@app.get("/")
-def root():
-    return {"status": "ok"}
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 @app.get("/health")
@@ -41,94 +50,131 @@ def health():
 
 @app.post("/guest/chat/start")
 def start_chat(data: StartChatRequest):
-    chat_room_id = len(chat_rooms) + 1
+    db: Session = SessionLocal()
 
-    room = {
-        "id": chat_room_id,
-        "property_name": data.property_name,
-        "room_number": data.room_number,
-        "guest_contact": data.guest_contact,
-        "category": data.category,
-        "status": "unassigned",
-        "mode": "bot",
-        "assigned_operator": None,
-        "created_at": datetime.now().isoformat(),
-    }
+    room = ChatRoom(
+        property_name=data.property_name,
+        room_number=data.room_number,
+        guest_contact=data.guest_contact,
+        category=data.category,
+    )
 
-    chat_rooms.append(room)
+    db.add(room)
+    db.commit()
+    db.refresh(room)
 
-    chat_messages.append({
-        "id": len(chat_messages) + 1,
-        "chat_room_id": chat_room_id,
-        "sender_type": "system",
-        "message": "お問い合わせありがとうございます。内容を確認します。",
-        "created_at": datetime.now().isoformat(),
-    })
+    system_message = Message(
+        chat_room_id=room.id,
+        sender_type="system",
+        message="お問い合わせありがとうございます。内容を確認します。",
+    )
+
+    db.add(system_message)
+    db.commit()
+
+    db.close()
 
     return {
-        "chat_room_id": chat_room_id,
-        "room": room,
+        "chat_room_id": room.id,
     }
 
 
 @app.post("/guest/chat/{chat_room_id}/messages")
-def send_guest_message(chat_room_id: int, data: MessageRequest):
-    room = next((r for r in chat_rooms if r["id"] == chat_room_id), None)
+def send_message(chat_room_id: int, data: MessageRequest):
+    db: Session = SessionLocal()
+
+    room = db.query(ChatRoom).filter(ChatRoom.id == chat_room_id).first()
 
     if not room:
-        raise HTTPException(status_code=404, detail="chat room not found")
+        raise HTTPException(status_code=404, detail="room not found")
 
-    msg = {
-        "id": len(chat_messages) + 1,
-        "chat_room_id": chat_room_id,
-        "sender_type": data.sender_type,
-        "message": data.message,
-        "created_at": datetime.now().isoformat(),
-    }
+    msg = Message(
+        chat_room_id=chat_room_id,
+        sender_type=data.sender_type,
+        message=data.message,
+    )
 
-    chat_messages.append(msg)
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+
+    db.close()
 
     return {
         "status": "ok",
-        "message": msg,
     }
 
 
 @app.get("/guest/chat/{chat_room_id}/messages")
-def get_guest_messages(chat_room_id: int):
-    room = next((r for r in chat_rooms if r["id"] == chat_room_id), None)
+def get_messages(chat_room_id: int):
+    db: Session = SessionLocal()
 
-    if not room:
-        raise HTTPException(status_code=404, detail="chat room not found")
+    messages = (
+        db.query(Message)
+        .filter(Message.chat_room_id == chat_room_id)
+        .order_by(Message.id.asc())
+        .all()
+    )
 
-    messages = [
-        m for m in chat_messages
-        if m["chat_room_id"] == chat_room_id
-    ]
+    result = []
+
+    for m in messages:
+        result.append({
+            "id": m.id,
+            "chat_room_id": m.chat_room_id,
+            "sender_type": m.sender_type,
+            "message": m.message,
+            "created_at": m.created_at,
+        })
+
+    db.close()
 
     return {
-        "chat_room_id": chat_room_id,
-        "messages": messages,
+        "messages": result,
     }
 
 
 @app.get("/operator/chat-rooms")
-def get_operator_chat_rooms():
+def get_chat_rooms():
+    db: Session = SessionLocal()
+
+    rooms = db.query(ChatRoom).order_by(ChatRoom.id.desc()).all()
+
+    result = []
+
+    for r in rooms:
+        result.append({
+            "id": r.id,
+            "property_name": r.property_name,
+            "room_number": r.room_number,
+            "guest_contact": r.guest_contact,
+            "category": r.category,
+            "status": r.status,
+            "assigned_operator": r.assigned_operator,
+        })
+
+    db.close()
+
     return {
-        "chat_rooms": chat_rooms,
+        "chat_rooms": result,
     }
 
 
 @app.patch("/operator/chat-rooms/{chat_room_id}/status")
-def update_chat_status(chat_room_id: int, status: str):
-    room = next((r for r in chat_rooms if r["id"] == chat_room_id), None)
+def update_status(chat_room_id: int, status: str):
+    db: Session = SessionLocal()
+
+    room = db.query(ChatRoom).filter(ChatRoom.id == chat_room_id).first()
 
     if not room:
-        raise HTTPException(status_code=404, detail="chat room not found")
+        raise HTTPException(status_code=404, detail="room not found")
 
-    room["status"] = status
+    room.status = status
+
+    db.commit()
+
+    db.close()
 
     return {
         "status": "ok",
-        "room": room,
     }
