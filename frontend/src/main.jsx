@@ -326,20 +326,55 @@ function OperatorPage() {
 }
 
 function GuestPage() {
+  const params = new URLSearchParams(window.location.search);
+
+  const propertyFromUrl = params.get("property") || "";
+  const roomFromUrl = params.get("room") || "";
+  const isStayLink = Boolean(propertyFromUrl && roomFromUrl);
+
   const [roomId, setRoomId] = useState(null);
+  const [propertyName, setPropertyName] = useState(propertyFromUrl);
+  const [roomNumber, setRoomNumber] = useState(roomFromUrl);
+  const [guestContact, setGuestContact] = useState("");
+  const [category, setCategory] = useState("");
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState([]);
 
+  const categories = [
+    "鍵・入室",
+    "Wi-Fi",
+    "駐車場",
+    "チェックアウト",
+    "設備トラブル",
+    "忘れ物",
+    "その他",
+  ];
+
   async function startChat() {
+    if (!propertyName.trim()) {
+      alert("物件名を入力してください");
+      return;
+    }
+
+    if (!guestContact.trim()) {
+      alert("メールアドレスまたは電話番号を入力してください");
+      return;
+    }
+
+    if (!category) {
+      alert("お問い合わせ内容を選択してください");
+      return;
+    }
+
     const res = await fetch(`${API_BASE}/guest/chat/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-  property_name: propertyName,
-  room_number: roomNumber,
-  guest_contact: guestContact,
-  category: category,
-}),
+        property_name: propertyName,
+        room_number: roomNumber || "未設定",
+        guest_contact: guestContact,
+        category,
+      }),
     });
 
     const data = await res.json();
@@ -349,6 +384,7 @@ function GuestPage() {
 
   async function loadMessages(id = roomId) {
     if (!id) return;
+
     const res = await fetch(`${API_BASE}/guest/chat/${id}/messages`);
     const data = await res.json();
     setMessages(data.messages || []);
@@ -360,41 +396,155 @@ function GuestPage() {
     await fetch(`${API_BASE}/guest/chat/${roomId}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sender_type: "guest", message }),
+      body: JSON.stringify({
+        sender_type: "guest",
+        message,
+      }),
     });
 
     setMessage("");
     loadMessages(roomId);
   }
 
+  useEffect(() => {
+    if (!roomId) return;
+
+    const timer = setInterval(() => {
+      loadMessages(roomId);
+    }, 3000);
+
+    return () => clearInterval(timer);
+  }, [roomId]);
+
   return (
-    <div style={{ maxWidth: 430, margin: "0 auto", minHeight: "100vh", padding: 16 }}>
-      <h2>ゲストサポート</h2>
+    <div className="min-h-screen bg-white text-slate-900 flex justify-center">
+      <div className="w-full max-w-[430px] min-h-screen border-x border-slate-200 flex flex-col">
+        <header className="sticky top-0 z-10 bg-white border-b border-slate-200 px-4 py-3">
+          <h1 className="font-bold text-lg">ゲストサポート</h1>
+          <p className="text-xs text-slate-500">
+            {isStayLink ? `${propertyName} / ${roomNumber}号室` : "お問い合わせ"}
+          </p>
+        </header>
 
-      {!roomId && (
-        <button onClick={startChat} style={{ width: "100%", padding: 12 }}>
-          チャット開始
-        </button>
-      )}
+        <main className="flex-1 overflow-y-auto px-4 py-4 space-y-4 pb-28">
+          {!roomId && (
+            <section className="space-y-4">
+              {isStayLink ? (
+                <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
+                  <div className="text-sm text-slate-500">滞在中のお問い合わせ</div>
+                  <div className="mt-1 font-bold">{propertyName}</div>
+                  <div className="text-sm text-slate-600">{roomNumber}号室</div>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="text-sm font-bold">物件名</label>
+                    <input
+                      value={propertyName}
+                      onChange={(e) => setPropertyName(e.target.value)}
+                      className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+                      placeholder="例：FFFホテル"
+                    />
+                  </div>
 
-      {roomId && (
-        <>
-          <p>チャットID: {roomId}</p>
+                  <div>
+                    <label className="text-sm font-bold">部屋番号 任意</label>
+                    <input
+                      value={roomNumber}
+                      onChange={(e) => setRoomNumber(e.target.value)}
+                      className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+                      placeholder="例：1001"
+                    />
+                  </div>
+                </>
+              )}
 
-          <div style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12, minHeight: 300 }}>
-            {messages.map((m) => (
-              <div key={m.id} style={{ marginBottom: 8 }}>
-                <b>{m.sender_type}</b>: {m.message}
+              <div>
+                <label className="text-sm font-bold">メールアドレス または 電話番号</label>
+                <input
+                  value={guestContact}
+                  onChange={(e) => setGuestContact(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+                  placeholder="例：guest@example.com / 090..."
+                />
               </div>
-            ))}
-          </div>
 
-          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-            <input value={message} onChange={(e) => setMessage(e.target.value)} style={{ flex: 1, padding: 10 }} placeholder="メッセージ" />
-            <button onClick={sendMessage}>送信</button>
-          </div>
-        </>
-      )}
+              <div>
+                <label className="text-sm font-bold">お問い合わせ内容</label>
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  {categories.map((item) => (
+                    <button
+                      key={item}
+                      onClick={() => setCategory(item)}
+                      className={`rounded-xl border px-3 py-3 text-sm text-left ${
+                        category === item
+                          ? "bg-blue-600 text-white border-blue-600"
+                          : "bg-white border-slate-300"
+                      }`}
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <button
+                onClick={startChat}
+                className="w-full rounded-xl bg-blue-600 text-white py-3 font-bold"
+              >
+                チャットを開始
+              </button>
+            </section>
+          )}
+
+          {roomId && (
+            <>
+              <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-xs text-slate-500">
+                チャットID：{roomId} / {propertyName} {roomNumber && `${roomNumber}号室`}
+              </div>
+
+              <div className="space-y-3">
+                {messages.map((m) => {
+                  const isGuest = m.sender_type === "guest";
+
+                  return (
+                    <div key={m.id} className={`flex ${isGuest ? "justify-end" : "justify-start"}`}>
+                      <div
+                        className={`max-w-[82%] rounded-2xl px-4 py-3 text-sm ${
+                          isGuest
+                            ? "bg-blue-600 text-white"
+                            : "bg-slate-100 text-slate-800"
+                        }`}
+                      >
+                        <div>{m.message}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </main>
+
+        {roomId && (
+          <footer className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] bg-white border-t border-slate-200 p-3">
+            <div className="flex gap-2">
+              <input
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                className="flex-1 rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+                placeholder="メッセージを入力"
+              />
+              <button
+                onClick={sendMessage}
+                className="rounded-xl bg-blue-600 text-white px-4 font-bold"
+              >
+                送信
+              </button>
+            </div>
+          </footer>
+        )}
+      </div>
     </div>
   );
 }
