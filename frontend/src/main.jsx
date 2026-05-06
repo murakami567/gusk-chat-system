@@ -335,11 +335,11 @@ function GuestPage() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        property_name: "FFFホテル",
-        room_number: "1001",
-        guest_contact: "test@example.com",
-        category: "鍵・入室",
-      }),
+  property_name: propertyName,
+  room_number: roomNumber,
+  guest_contact: guestContact,
+  category: category,
+}),
     });
 
     const data = await res.json();
