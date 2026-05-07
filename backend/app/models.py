@@ -27,15 +27,17 @@ class ChatRoom(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
-class Message(Base):
-    __tablename__ = "messages"
+class MessageTemplate(Base):
+    __tablename__ = "message_templates"
 
     id = Column(Integer, primary_key=True, index=True)
 
-    chat_room_id = Column(Integer)
+    property_name = Column(String)
+    category = Column(String)
+    title = Column(String)
+    body = Column(String)
 
-    sender_type = Column(String)
-
-    message = Column(String)
+    is_emergency = Column(String, default="false")
+    active = Column(String, default="true")
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
