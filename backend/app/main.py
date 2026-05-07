@@ -35,6 +35,14 @@ class MessageRequest(BaseModel):
     sender_type: str
     message: str
 
+class TemplateRequest(BaseModel):
+    property_name: str
+    category: str
+    title: str
+    body: str
+    is_emergency: str = "false"
+    active: str = "true"
+
 
 def get_db():
     db = SessionLocal()
@@ -66,11 +74,25 @@ def start_chat(data: StartChatRequest):
 
     room_id = room.id
 
-    system_message = Message(
-        chat_room_id=room_id,
-        sender_type="system",
-        message="お問い合わせありがとうございます。内容を確認します。",
-    )
+    template = (
+    db.query(MessageTemplate)
+    .filter(MessageTemplate.property_name == data.property_name)
+    .filter(MessageTemplate.category == data.category)
+    .filter(MessageTemplate.active == "true")
+    .first()
+)
+
+reply_text = (
+    template.body
+    if template
+    else "お問い合わせありがとうございます。内容を確認します。"
+)
+
+system_message = Message(
+    chat_room_id=room_id,
+    sender_type="system",
+    message=reply_text,
+)
 
     db.add(system_message)
     db.commit()
@@ -174,6 +196,103 @@ def update_status(chat_room_id: int, status: str):
 
     room.status = status
 
+    db.commit()
+
+    db.close()
+
+    return {
+        "status": "ok",
+    }
+
+@app.get("/operator/templates")
+def get_templates():
+    db: Session = SessionLocal()
+
+    templates = db.query(MessageTemplate).order_by(MessageTemplate.id.desc()).all()
+
+    result = []
+
+    for t in templates:
+        result.append({
+            "id": t.id,
+            "property_name": t.property_name,
+            "category": t.category,
+            "title": t.title,
+            "body": t.body,
+            "is_emergency": t.is_emergency,
+            "active": t.active,
+            "created_at": t.created_at,
+        })
+
+    db.close()
+
+    return {
+        "templates": result,
+    }
+
+
+@app.post("/operator/templates")
+def create_template(data: TemplateRequest):
+    db: Session = SessionLocal()
+
+    template = MessageTemplate(
+        property_name=data.property_name,
+        category=data.category,
+        title=data.title,
+        body=data.body,
+        is_emergency=data.is_emergency,
+        active=data.active,
+    )
+
+    db.add(template)
+    db.commit()
+    db.refresh(template)
+
+    template_id = template.id
+
+    db.close()
+
+    return {
+        "status": "ok",
+        "template_id": template_id,
+    }
+
+
+@app.patch("/operator/templates/{template_id}")
+def update_template(template_id: int, data: TemplateRequest):
+    db: Session = SessionLocal()
+
+    template = db.query(MessageTemplate).filter(MessageTemplate.id == template_id).first()
+
+    if not template:
+        raise HTTPException(status_code=404, detail="template not found")
+
+    template.property_name = data.property_name
+    template.category = data.category
+    template.title = data.title
+    template.body = data.body
+    template.is_emergency = data.is_emergency
+    template.active = data.active
+
+    db.commit()
+
+    db.close()
+
+    return {
+        "status": "ok",
+    }
+
+
+@app.delete("/operator/templates/{template_id}")
+def delete_template(template_id: int):
+    db: Session = SessionLocal()
+
+    template = db.query(MessageTemplate).filter(MessageTemplate.id == template_id).first()
+
+    if not template:
+        raise HTTPException(status_code=404, detail="template not found")
+
+    db.delete(template)
     db.commit()
 
     db.close()
