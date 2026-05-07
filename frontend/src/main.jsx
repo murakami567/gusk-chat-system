@@ -809,6 +809,10 @@ function TemplatePage() {
 
 
 function App() {
+  if (window.location.pathname.startsWith("/templates")) {
+    return <TemplatePage />;
+  }
+
   if (window.location.pathname.startsWith("/operator")) {
     return <OperatorPage />;
   }
