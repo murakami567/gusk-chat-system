@@ -75,24 +75,24 @@ def start_chat(data: StartChatRequest):
     room_id = room.id
 
     template = (
-    db.query(MessageTemplate)
-    .filter(MessageTemplate.property_name == data.property_name)
-    .filter(MessageTemplate.category == data.category)
-    .filter(MessageTemplate.active == "true")
-    .first()
-)
+        db.query(MessageTemplate)
+        .filter(MessageTemplate.property_name == data.property_name)
+        .filter(MessageTemplate.category == data.category)
+        .filter(MessageTemplate.active == "true")
+        .first()
+    )
 
-reply_text = (
-    template.body
-    if template
-    else "お問い合わせありがとうございます。内容を確認します。"
-)
+    reply_text = (
+        template.body
+        if template
+        else "お問い合わせありがとうございます。内容を確認します。"
+    )
 
-system_message = Message(
-    chat_room_id=room_id,
-    sender_type="system",
-    message=reply_text,
-)
+    system_message = Message(
+        chat_room_id=room_id,
+        sender_type="system",
+        message=reply_text,
+    )
 
     db.add(system_message)
     db.commit()
