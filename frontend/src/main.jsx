@@ -549,6 +549,265 @@ function GuestPage() {
   );
 }
 
+function TemplatePage() {
+  const [templates, setTemplates] = useState([]);
+  const [form, setForm] = useState({
+    property_name: "",
+    category: "",
+    title: "",
+    body: "",
+    is_emergency: "false",
+    active: "true",
+  });
+
+  const categories = [
+    "鍵・入室",
+    "Wi-Fi",
+    "駐車場",
+    "チェックアウト",
+    "設備トラブル",
+    "忘れ物",
+    "その他",
+  ];
+
+  async function loadTemplates() {
+    const res = await fetch(`${API_BASE}/operator/templates`);
+    const data = await res.json();
+    setTemplates(data.templates || []);
+  }
+
+  async function createTemplate() {
+    if (!form.property_name.trim()) {
+      alert("物件名を入力してください");
+      return;
+    }
+
+    if (!form.category.trim()) {
+      alert("カテゴリを選択してください");
+      return;
+    }
+
+    if (!form.title.trim()) {
+      alert("タイトルを入力してください");
+      return;
+    }
+
+    if (!form.body.trim()) {
+      alert("本文を入力してください");
+      return;
+    }
+
+    await fetch(`${API_BASE}/operator/templates`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(form),
+    });
+
+    setForm({
+      property_name: "",
+      category: "",
+      title: "",
+      body: "",
+      is_emergency: "false",
+      active: "true",
+    });
+
+    loadTemplates();
+  }
+
+  async function deleteTemplate(id) {
+    if (!confirm("このテンプレートを削除しますか？")) return;
+
+    await fetch(`${API_BASE}/operator/templates/${id}`, {
+      method: "DELETE",
+    });
+
+    loadTemplates();
+  }
+
+  useEffect(() => {
+    loadTemplates();
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-slate-100 text-slate-900">
+      <header className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold">テンプレート管理</h1>
+          <p className="text-xs text-slate-500">物件別・カテゴリ別の無人返信テンプレート</p>
+        </div>
+
+        <div className="flex gap-2">
+          <a href="/operator" className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm">
+            チャット管理へ
+          </a>
+        </div>
+      </header>
+
+      <main className="grid grid-cols-12 gap-4 p-4">
+        <section className="col-span-12 lg:col-span-4 bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+          <h2 className="font-bold text-lg mb-4">新規テンプレート作成</h2>
+
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-bold">物件名</label>
+              <input
+                value={form.property_name}
+                onChange={(e) => setForm({ ...form, property_name: e.target.value })}
+                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+                placeholder="例：FFFホテル"
+              />
+            </div>
+
+            <div>
+              <label className="text-sm font-bold">カテゴリ</label>
+              <select
+                value={form.category}
+                onChange={(e) => setForm({ ...form, category: e.target.value })}
+                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none bg-white"
+              >
+                <option value="">選択してください</option>
+                {categories.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-sm font-bold">タイトル</label>
+              <input
+                value={form.title}
+                onChange={(e) => setForm({ ...form, title: e.target.value })}
+                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+                placeholder="例：FFFホテル 鍵案内"
+              />
+            </div>
+
+            <div>
+              <label className="text-sm font-bold">本文</label>
+              <textarea
+                value={form.body}
+                onChange={(e) => setForm({ ...form, body: e.target.value })}
+                className="mt-1 w-full min-h-[180px] rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+                placeholder="ゲストに自動返信する文章を入力してください"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <label className="rounded-xl border border-slate-200 p-3 text-sm flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={form.is_emergency === "true"}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      is_emergency: e.target.checked ? "true" : "false",
+                    })
+                  }
+                />
+                緊急カテゴリ
+              </label>
+
+              <label className="rounded-xl border border-slate-200 p-3 text-sm flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={form.active === "true"}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      active: e.target.checked ? "true" : "false",
+                    })
+                  }
+                />
+                有効
+              </label>
+            </div>
+
+            <button
+              onClick={createTemplate}
+              className="w-full rounded-xl bg-blue-600 text-white py-3 font-bold"
+            >
+              保存
+            </button>
+          </div>
+        </section>
+
+        <section className="col-span-12 lg:col-span-8 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="p-5 border-b border-slate-200 flex items-center justify-between">
+            <div>
+              <h2 className="font-bold text-lg">登録済みテンプレート</h2>
+              <p className="text-xs text-slate-500">チャット開始時に物件名 + カテゴリで自動返信されます</p>
+            </div>
+
+            <button
+              onClick={loadTemplates}
+              className="rounded-xl border border-slate-300 px-4 py-2 text-sm"
+            >
+              更新
+            </button>
+          </div>
+
+          <div className="divide-y divide-slate-200">
+            {templates.length === 0 && (
+              <div className="p-6 text-sm text-slate-500">
+                まだテンプレートが登録されていません。
+              </div>
+            )}
+
+            {templates.map((template) => (
+              <div key={template.id} className="p-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-bold text-lg">{template.title}</span>
+                      <span className="rounded-full bg-slate-100 text-slate-700 px-2 py-1 text-xs">
+                        {template.property_name}
+                      </span>
+                      <span className="rounded-full bg-blue-100 text-blue-700 px-2 py-1 text-xs">
+                        {template.category}
+                      </span>
+                      {template.is_emergency === "true" && (
+                        <span className="rounded-full bg-red-100 text-red-700 px-2 py-1 text-xs">
+                          緊急
+                        </span>
+                      )}
+                      {template.active === "true" ? (
+                        <span className="rounded-full bg-emerald-100 text-emerald-700 px-2 py-1 text-xs">
+                          有効
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-slate-100 text-slate-500 px-2 py-1 text-xs">
+                          無効
+                        </span>
+                      )}
+                    </div>
+
+                    <p className="mt-3 text-sm text-slate-700 whitespace-pre-wrap">
+                      {template.body}
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={() => deleteTemplate(template.id)}
+                    className="shrink-0 rounded-xl border border-red-200 text-red-600 px-3 py-2 text-sm"
+                  >
+                    削除
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
+
+
 function App() {
   if (window.location.pathname.startsWith("/operator")) {
     return <OperatorPage />;
