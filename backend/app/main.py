@@ -9,6 +9,7 @@ from .database import SessionLocal
 from .database import engine
 from .models import ChatRoom
 from .models import Message
+from .models import MessageTemplate
 
 Base.metadata.create_all(bind=engine)
 
