@@ -56,6 +56,10 @@ class MessageRequest(BaseModel):
     message: str
 
 
+class PropertyRequest(BaseModel):
+    name: str
+
+
 class CategoryRequest(BaseModel):
     name: str
     property_name: str | None = None
@@ -132,6 +136,46 @@ def _template_dict(t: MessageTemplate) -> dict:
 @app.get("/health")
 def health():
     return {"status": "healthy"}
+
+
+# ── 物件管理 ──────────────────────────────────────────────────────────────────
+
+@app.get("/properties")
+def get_properties():
+    db: Session = SessionLocal()
+    props = db.query(Property).order_by(Property.name.asc()).all()
+    result = [{"id": p.id, "name": p.name, "created_at": p.created_at} for p in props]
+    db.close()
+    return {"properties": result}
+
+
+@app.post("/properties")
+def create_property(data: PropertyRequest):
+    db: Session = SessionLocal()
+    existing = db.query(Property).filter(Property.name == data.name).first()
+    if existing:
+        db.close()
+        raise HTTPException(status_code=400, detail="property already exists")
+    prop = Property(name=data.name)
+    db.add(prop)
+    db.commit()
+    db.refresh(prop)
+    prop_id = prop.id
+    db.close()
+    return {"status": "ok", "property_id": prop_id}
+
+
+@app.delete("/properties/{property_id}")
+def delete_property(property_id: int):
+    db: Session = SessionLocal()
+    prop = db.query(Property).filter(Property.id == property_id).first()
+    if not prop:
+        db.close()
+        raise HTTPException(status_code=404, detail="property not found")
+    db.delete(prop)
+    db.commit()
+    db.close()
+    return {"status": "ok"}
 
 
 # ── カテゴリ管理 ──────────────────────────────────────────────────────────────
