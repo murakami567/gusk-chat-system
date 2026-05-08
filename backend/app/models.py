@@ -41,6 +41,7 @@ class ChatRoom(Base):
     status = Column(String, default="unassigned")
     assigned_operator = Column(String, nullable=True)
     mode = Column(String, default="bot")
+    checkin_date = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

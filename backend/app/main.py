@@ -20,6 +20,10 @@ def _run_migrations():
             ALTER TABLE message_templates
             ADD COLUMN IF NOT EXISTS parent_id INTEGER REFERENCES message_templates(id)
         """))
+        conn.execute(text("""
+            ALTER TABLE chat_rooms
+            ADD COLUMN IF NOT EXISTS checkin_date VARCHAR
+        """))
         conn.commit()
 
 _run_migrations()
@@ -78,6 +82,13 @@ class TemplateRequest(BaseModel):
     is_emergency: str = "false"
     active: str = "true"
     parent_id: int | None = None
+
+
+class UpdateRoomInfoRequest(BaseModel):
+    guest_contact: str | None = None
+    category: str | None = None
+    assigned_operator: str | None = None
+    checkin_date: str | None = None
 
 
 # ── ヘルパー ──────────────────────────────────────────────────────────────────
@@ -483,11 +494,28 @@ def get_chat_rooms():
             "status": r.status,
             "mode": r.mode,
             "assigned_operator": r.assigned_operator,
+            "checkin_date": r.checkin_date,
         }
         for r in rooms
     ]
     db.close()
     return {"chat_rooms": result}
+
+
+@app.patch("/operator/chat-rooms/{chat_room_id}/info")
+def update_room_info(chat_room_id: int, data: UpdateRoomInfoRequest):
+    db: Session = SessionLocal()
+    room = db.query(ChatRoom).filter(ChatRoom.id == chat_room_id).first()
+    if not room:
+        db.close()
+        raise HTTPException(status_code=404, detail="room not found")
+    room.guest_contact = data.guest_contact or None
+    room.category = data.category or None
+    room.assigned_operator = data.assigned_operator or None
+    room.checkin_date = data.checkin_date or None
+    db.commit()
+    db.close()
+    return {"status": "ok"}
 
 
 @app.patch("/operator/chat-rooms/{chat_room_id}/status")

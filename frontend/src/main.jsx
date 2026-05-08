@@ -45,6 +45,9 @@ function OperatorPage() {
     emergency_phone: "",
     emergency_message: "",
   });
+  const [allCategories, setAllCategories] = useState([]);
+  const [infoEditing, setInfoEditing] = useState(false);
+  const [infoForm, setInfoForm] = useState({ guest_contact: "", category: "", assigned_operator: "", checkin_date: "" });
   const prevEscalatedIds = useRef(new Set());
 
   const selected = rooms.find((r) => r.id === selectedId) ?? null;
@@ -59,7 +62,14 @@ function OperatorPage() {
     fetch(`${API_BASE}/settings`)
       .then((r) => r.json())
       .then((d) => setSettings(d));
+    fetch(`${API_BASE}/categories`)
+      .then((r) => r.json())
+      .then((d) => setAllCategories(d.categories || []));
   }, []);
+
+  useEffect(() => {
+    setInfoEditing(false);
+  }, [selectedId]);
 
   async function loadRooms() {
     const res = await fetch(`${API_BASE}/operator/chat-rooms`);
@@ -114,6 +124,17 @@ function OperatorPage() {
     await fetch(`${API_BASE}/operator/chat-rooms/${selected.id}/status?status=${status}`, {
       method: "PATCH",
     });
+    await loadRooms();
+  }
+
+  async function saveRoomInfo() {
+    if (!selected) return;
+    await fetch(`${API_BASE}/operator/chat-rooms/${selected.id}/info`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(infoForm),
+    });
+    setInfoEditing(false);
     await loadRooms();
   }
 
@@ -290,38 +311,121 @@ function OperatorPage() {
 
         {/* 右カラム：対応情報 */}
         <aside className="col-span-12 lg:col-span-3 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-y-auto">
-          <div className="p-4 border-b border-slate-200">
+          <div className="p-4 border-b border-slate-200 flex items-center justify-between">
             <h3 className="font-bold flex items-center gap-2">
               <Icon label="人" /> 対応情報
             </h3>
+            {selected && !infoEditing && (
+              <button
+                onClick={() => {
+                  setInfoForm({
+                    guest_contact: selected.guest_contact || "",
+                    category: selected.category || "",
+                    assigned_operator: selected.assigned_operator || "",
+                    checkin_date: selected.checkin_date || "",
+                  });
+                  setInfoEditing(true);
+                }}
+                className="text-xs text-blue-600 underline"
+              >
+                編集
+              </button>
+            )}
           </div>
 
           {selected && (
             <div className="p-4 space-y-5">
-              <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4 space-y-3 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">物件</span>
-                  <span className="font-medium">{selected.property_name}</span>
+              {!infoEditing ? (
+                <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4 space-y-3 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">物件</span>
+                    <span className="font-medium">{selected.property_name}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">部屋</span>
+                    <span className="font-medium">{selected.room_number}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">連絡先</span>
+                    <span className="font-medium">{selected.guest_contact || "-"}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">カテゴリ</span>
+                    <span className="font-medium">{selected.category || "-"}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">チェックイン日</span>
+                    <span className="font-medium">{selected.checkin_date || "-"}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">担当者</span>
+                    <span className="font-medium">{selected.assigned_operator || "-"}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">モード</span>
+                    <span className={`font-medium ${selected.mode === "operator" ? "text-red-600" : "text-slate-700"}`}>
+                      {selected.mode === "operator" ? "有人対応" : "ボット"}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">部屋</span>
-                  <span className="font-medium">{selected.room_number}</span>
+              ) : (
+                <div className="space-y-3 text-sm">
+                  <div>
+                    <label className="text-xs text-slate-500">連絡先</label>
+                    <input
+                      value={infoForm.guest_contact}
+                      onChange={(e) => setInfoForm({ ...infoForm, guest_contact: e.target.value })}
+                      className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none"
+                      placeholder="電話番号 / メール"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500">カテゴリ</label>
+                    <select
+                      value={infoForm.category}
+                      onChange={(e) => setInfoForm({ ...infoForm, category: e.target.value })}
+                      className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none bg-white"
+                    >
+                      <option value="">未選択</option>
+                      {allCategories.map((c) => (
+                        <option key={c.id} value={c.name}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500">チェックイン日</label>
+                    <input
+                      type="date"
+                      value={infoForm.checkin_date}
+                      onChange={(e) => setInfoForm({ ...infoForm, checkin_date: e.target.value })}
+                      className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500">担当者</label>
+                    <input
+                      value={infoForm.assigned_operator}
+                      onChange={(e) => setInfoForm({ ...infoForm, assigned_operator: e.target.value })}
+                      className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none"
+                      placeholder="担当者名"
+                    />
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      onClick={saveRoomInfo}
+                      className="flex-1 rounded-xl bg-blue-600 text-white py-2.5 text-sm font-bold"
+                    >
+                      保存
+                    </button>
+                    <button
+                      onClick={() => setInfoEditing(false)}
+                      className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm"
+                    >
+                      キャンセル
+                    </button>
+                  </div>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">連絡先</span>
-                  <span className="font-medium">{selected.guest_contact || "-"}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">カテゴリ</span>
-                  <span className="font-medium">{selected.category || "-"}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">モード</span>
-                  <span className={`font-medium ${selected.mode === "operator" ? "text-red-600" : "text-slate-700"}`}>
-                    {selected.mode === "operator" ? "有人対応" : "ボット"}
-                  </span>
-                </div>
-              </div>
+              )}
 
               <div className="grid grid-cols-2 gap-2">
                 <button onClick={() => updateStatus("in_progress")} className="rounded-xl bg-blue-600 text-white py-3 text-sm font-medium">
