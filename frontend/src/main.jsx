@@ -433,7 +433,7 @@ function GuestPage() {
     if (data.children.length > 0) {
       setTemplateStack((prev) => [...prev, data.children]);
     } else {
-      setBotPhase("chat");
+      setBotPhase("resolved_check");
     }
   }
 
@@ -621,6 +621,42 @@ function GuestPage() {
               <div className="text-2xl">📞</div>
               <p className="font-bold text-red-700">スタッフに接続中</p>
               <p className="text-sm text-red-600">担当スタッフがメッセージをご確認次第、対応いたします。</p>
+            </div>
+          )}
+
+          {/* ── 解決確認 ── */}
+          {botPhase === "resolved_check" && (
+            <div className="rounded-2xl bg-slate-50 border border-slate-200 p-5 space-y-4">
+              <p className="text-sm font-bold text-slate-700 text-center">問題は解決しましたか？</p>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => setBotPhase("done")}
+                  className="rounded-xl bg-emerald-600 text-white py-3 text-sm font-bold"
+                >
+                  はい
+                </button>
+                <button
+                  onClick={() => setBotPhase("chat")}
+                  className="rounded-xl bg-slate-200 text-slate-800 py-3 text-sm font-bold"
+                >
+                  いいえ
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── 解決完了 ── */}
+          {botPhase === "done" && (
+            <div className="rounded-2xl bg-emerald-50 border border-emerald-200 p-5 text-center space-y-2">
+              <div className="text-2xl">✓</div>
+              <p className="font-bold text-emerald-700">解決できてよかったです</p>
+              <p className="text-sm text-emerald-600">ご利用ありがとうございました。</p>
+              <button
+                onClick={goBackToCategory}
+                className="mt-2 text-xs text-slate-500 underline"
+              >
+                別の問題を相談する
+              </button>
             </div>
           )}
 
