@@ -636,10 +636,42 @@ function GuestPage() {
                   はい
                 </button>
                 <button
-                  onClick={() => setBotPhase("chat")}
+                  onClick={() => setBotPhase(currentTemplates.length > 0 ? "related" : "chat")}
                   className="rounded-xl bg-slate-200 text-slate-800 py-3 text-sm font-bold"
                 >
                   いいえ
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── 関連する内容 ── */}
+          {botPhase === "related" && (
+            <div className="space-y-3">
+              <p className="text-sm font-bold text-slate-700">他にお困りのことはありますか？</p>
+              <div className="space-y-2">
+                {currentTemplates.map((tmpl) => (
+                  <button
+                    key={tmpl.id}
+                    onClick={() => selectTemplate(tmpl)}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-left hover:bg-slate-50 transition"
+                  >
+                    {tmpl.title}
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={goBackToCategory}
+                  className="flex-1 rounded-xl border border-slate-300 py-2.5 text-sm text-slate-600"
+                >
+                  カテゴリに戻る
+                </button>
+                <button
+                  onClick={() => setBotPhase("chat")}
+                  className="flex-1 rounded-xl border border-blue-300 text-blue-700 py-2.5 text-sm"
+                >
+                  メッセージで相談
                 </button>
               </div>
             </div>
