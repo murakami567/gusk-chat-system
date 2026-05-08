@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .database import Base, SessionLocal, engine
-from .models import Category, ChatRoom, Message, MessageTemplate, Property
+from .models import Category, ChatRoom, Message, MessageTemplate, Property, Setting
 
 Base.metadata.create_all(bind=engine)
 
@@ -58,6 +58,10 @@ class MessageRequest(BaseModel):
 
 class PropertyRequest(BaseModel):
     name: str
+
+
+class SettingRequest(BaseModel):
+    value: str
 
 
 class CategoryRequest(BaseModel):
@@ -173,6 +177,42 @@ def delete_property(property_id: int):
         db.close()
         raise HTTPException(status_code=404, detail="property not found")
     db.delete(prop)
+    db.commit()
+    db.close()
+    return {"status": "ok"}
+
+
+# ── カテゴリ管理 ──────────────────────────────────────────────────────────────
+
+# ── 設定管理 ──────────────────────────────────────────────────────────────────
+
+SETTING_DEFAULTS = {
+    "hours_start": "10:00",
+    "hours_end": "19:00",
+    "emergency_phone": "",
+    "emergency_message": "時間外は緊急カテゴリのみ対応いたします。",
+}
+
+@app.get("/settings")
+def get_settings():
+    db: Session = SessionLocal()
+    rows = db.query(Setting).all()
+    result = {r.key: r.value for r in rows}
+    db.close()
+    # DBに未登録のキーはデフォルト値で補完
+    return {**SETTING_DEFAULTS, **result}
+
+
+@app.put("/settings/{key}")
+def upsert_setting(key: str, data: SettingRequest):
+    if key not in SETTING_DEFAULTS:
+        raise HTTPException(status_code=400, detail="unknown setting key")
+    db: Session = SessionLocal()
+    row = db.query(Setting).filter(Setting.key == key).first()
+    if row:
+        row.value = data.value
+    else:
+        db.add(Setting(key=key, value=data.value))
     db.commit()
     db.close()
     return {"status": "ok"}
