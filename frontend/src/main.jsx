@@ -3,6 +3,37 @@ import { createRoot } from "react-dom/client";
 
 const API_BASE = "https://gusk-chat-system.onrender.com";
 
+function compressImage(file, maxWidth = 1200, quality = 0.75) {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith("image/")) { reject(new Error("not an image")); return; }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if (w > maxWidth) { h = Math.round((h * maxWidth) / w); w = maxWidth; }
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function ChatImage({ src, className = "" }) {
+  return (
+    <img
+      src={src}
+      alt="画像"
+      className={`rounded-xl max-w-full cursor-pointer ${className}`}
+      onClick={() => window.open(src, "_blank")}
+    />
+  );
+}
+
 const STATUS = {
   unassigned: { label: "未対応", className: "bg-amber-100 text-amber-800 border-amber-200" },
   in_progress: { label: "対応中", className: "bg-blue-100 text-blue-800 border-blue-200" },
@@ -51,6 +82,7 @@ function OperatorPage() {
   const [guestHistory, setGuestHistory] = useState([]);
   const [expandedHistoryId, setExpandedHistoryId] = useState(null);
   const [expandedHistoryMessages, setExpandedHistoryMessages] = useState([]);
+  const imageInputRef = useRef(null);
   const prevEscalatedIds = useRef(new Set());
 
   const selected = rooms.find((r) => r.id === selectedId) ?? null;
@@ -150,6 +182,21 @@ function OperatorPage() {
     const res = await fetch(`${API_BASE}/guest/chat/${roomId}/messages`);
     const data = await res.json();
     setExpandedHistoryMessages(data.messages || []);
+  }
+
+  async function sendImage(file) {
+    if (!selected || !file) return;
+    try {
+      const base64 = await compressImage(file);
+      await fetch(`${API_BASE}/guest/chat/${selected.id}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sender_type: "operator", message: base64 }),
+      });
+      await loadMessages(selected.id);
+    } catch {
+      alert("画像の送信に失敗しました");
+    }
   }
 
   async function saveRoomInfo() {
@@ -308,7 +355,11 @@ function OperatorPage() {
                       {message.sender_type === "system" ? "ボット" : message.sender_type}・
                       {new Date(message.created_at).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}
                     </div>
-                    <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.message}</p>
+                    {message.message.startsWith("data:image/") ? (
+                      <ChatImage src={message.message} className="mt-1" />
+                    ) : (
+                      <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.message}</p>
+                    )}
                   </div>
                 </div>
               );
@@ -324,6 +375,16 @@ function OperatorPage() {
                 className="flex-1 rounded-xl border border-slate-200 px-4 py-3 outline-none text-sm"
                 placeholder="メッセージを入力（Shift+Enter で送信）"
               />
+              <label className="rounded-xl border border-slate-200 px-3 py-3 cursor-pointer hover:bg-slate-50 flex items-center">
+                <Icon label="🖼" />
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => { if (e.target.files[0]) { sendImage(e.target.files[0]); e.target.value = ""; } }}
+                />
+              </label>
               <button
                 onClick={sendReply}
                 className="rounded-xl bg-slate-900 text-white px-4 py-3 flex items-center gap-2"
@@ -532,7 +593,11 @@ function OperatorPage() {
                                     <div className="opacity-50 mb-0.5">
                                       {m.sender_type === "system" ? "ボット" : m.sender_type}
                                     </div>
-                                    <p className="whitespace-pre-wrap">{m.message}</p>
+                                    {m.message.startsWith("data:image/") ? (
+                                      <ChatImage src={m.message} className="max-w-[160px]" />
+                                    ) : (
+                                      <p className="whitespace-pre-wrap">{m.message}</p>
+                                    )}
                                   </div>
                                 </div>
                               ))}
@@ -686,6 +751,21 @@ function GuestPage() {
     loadMessages(roomId);
   }
 
+  async function sendImageMessage(file) {
+    if (!roomId || !file) return;
+    try {
+      const base64 = await compressImage(file);
+      await fetch(`${API_BASE}/guest/chat/${roomId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sender_type: "guest", message: base64 }),
+      });
+      loadMessages(roomId);
+    } catch {
+      alert("画像の送信に失敗しました");
+    }
+  }
+
   useEffect(() => {
     if (!roomId) return;
     const timer = setInterval(() => loadMessages(roomId), 3000);
@@ -776,7 +856,11 @@ function GuestPage() {
                           isGuest ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-800"
                         }`}
                       >
-                        <p className="whitespace-pre-wrap">{m.message}</p>
+                        {m.message.startsWith("data:image/") ? (
+                          <ChatImage src={m.message} />
+                        ) : (
+                          <p className="whitespace-pre-wrap">{m.message}</p>
+                        )}
                       </div>
                     </div>
                   );
@@ -932,6 +1016,15 @@ function GuestPage() {
                 className="flex-1 rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
                 placeholder="メッセージを入力"
               />
+              <label className="rounded-xl border border-slate-300 px-3 py-3 cursor-pointer hover:bg-slate-50 flex items-center">
+                🖼
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => { if (e.target.files[0]) { sendImageMessage(e.target.files[0]); e.target.value = ""; } }}
+                />
+              </label>
               <button
                 onClick={sendTextMessage}
                 className="rounded-xl bg-blue-600 text-white px-4 font-bold"
