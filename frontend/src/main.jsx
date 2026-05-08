@@ -265,9 +265,9 @@ function OperatorPage() {
               <input
                 value={reply}
                 onChange={(e) => setReply(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && !e.isComposing && sendReply()}
+                onKeyDown={(e) => e.key === "Enter" && e.shiftKey && !e.isComposing && sendReply()}
                 className="flex-1 rounded-xl border border-slate-200 px-4 py-3 outline-none text-sm"
-                placeholder="メッセージを入力..."
+                placeholder="メッセージを入力（Shift+Enter で送信）"
               />
               <button
                 onClick={sendReply}
@@ -721,7 +721,7 @@ function GuestPage() {
               <input
                 value={textInput}
                 onChange={(e) => setTextInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && !e.isComposing && sendTextMessage()}
+                onKeyDown={(e) => e.key === "Enter" && e.shiftKey && !e.isComposing && sendTextMessage()}
                 className="flex-1 rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
                 placeholder="メッセージを入力"
               />
