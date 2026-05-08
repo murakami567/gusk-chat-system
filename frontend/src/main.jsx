@@ -721,7 +721,6 @@ function GuestPage() {
               <input
                 value={textInput}
                 onChange={(e) => setTextInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && e.shiftKey && !e.isComposing && sendTextMessage()}
                 className="flex-1 rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
                 placeholder="メッセージを入力"
               />
