@@ -455,7 +455,16 @@ function GuestPage() {
     if (!id) return;
     const res = await fetch(`${API_BASE}/guest/chat/${id}/messages`);
     const data = await res.json();
-    setMessages(data.messages || []);
+    const msgs = data.messages || [];
+    setMessages(msgs);
+
+    // オペレーターがメッセージを送信したら、どのフェーズでも返信入力を有効化
+    const hasOperatorMessage = msgs.some((m) => m.sender_type === "operator");
+    if (hasOperatorMessage) {
+      setBotPhase((prev) =>
+        prev === "escalated" || prev === "chat" ? prev : "chat"
+      );
+    }
   }
 
   async function sendTextMessage() {
