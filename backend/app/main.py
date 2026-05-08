@@ -9,11 +9,11 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .database import Base, SessionLocal, engine
-from .models import Category, ChatRoom, Message, MessageTemplate
+from .models import Category, ChatRoom, Message, MessageTemplate, Property
 
 Base.metadata.create_all(bind=engine)
 
-# 既存テーブルへの列追加・新テーブル作成をカバーする起動時マイグレーション
+# 既存テーブルへの列追加をカバーする起動時マイグレーション
 def _run_migrations():
     with engine.connect() as conn:
         conn.execute(text("""
