@@ -358,6 +358,7 @@ function GuestPage() {
   const [guestContact, setGuestContact] = useState("");
   const [messages, setMessages] = useState([]);
   const [textInput, setTextInput] = useState("");
+  const [properties, setProperties] = useState([]);
 
   // ボットフロー状態: "form" | "category" | "templates" | "escalated" | "chat"
   const [botPhase, setBotPhase] = useState("form");
@@ -371,8 +372,14 @@ function GuestPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  useEffect(() => {
+    fetch(`${API_BASE}/properties`)
+      .then((r) => r.json())
+      .then((d) => setProperties(d.properties || []));
+  }, []);
+
   async function startChat() {
-    if (!propertyName.trim()) { alert("物件名を入力してください"); return; }
+    if (!propertyName) { alert("物件を選択してください"); return; }
     if (!guestContact.trim()) { alert("メールアドレスまたは電話番号を入力してください"); return; }
 
     const res = await fetch(`${API_BASE}/guest/chat/start`, {
@@ -493,12 +500,16 @@ function GuestPage() {
                 <>
                   <div>
                     <label className="text-sm font-bold">物件名</label>
-                    <input
+                    <select
                       value={propertyName}
                       onChange={(e) => setPropertyName(e.target.value)}
-                      className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
-                      placeholder="例：FFFホテル"
-                    />
+                      className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none bg-white"
+                    >
+                      <option value="">選択してください</option>
+                      {properties.map((p) => (
+                        <option key={p.id} value={p.name}>{p.name}</option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="text-sm font-bold">部屋番号 任意</label>
@@ -654,14 +665,14 @@ function GuestPage() {
 // ── テンプレート・カテゴリ管理ページ ──────────────────────────────────────────
 
 function TemplatePage() {
-  const [activeTab, setActiveTab] = useState("templates"); // "templates" | "categories"
+  const [activeTab, setActiveTab] = useState("properties"); // "properties" | "categories" | "templates"
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900">
       <header className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold">管理ページ</h1>
-          <p className="text-xs text-slate-500">テンプレートとカテゴリの設定</p>
+          <p className="text-xs text-slate-500">物件・カテゴリ・テンプレートの設定</p>
         </div>
         <div className="flex gap-2">
           <a href="/operator" className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm">
@@ -671,25 +682,25 @@ function TemplatePage() {
       </header>
 
       <div className="px-6 pt-4 flex gap-2">
-        <button
-          onClick={() => setActiveTab("categories")}
-          className={`rounded-xl px-5 py-2 text-sm font-medium border ${
-            activeTab === "categories" ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300"
-          }`}
-        >
-          カテゴリ管理
-        </button>
-        <button
-          onClick={() => setActiveTab("templates")}
-          className={`rounded-xl px-5 py-2 text-sm font-medium border ${
-            activeTab === "templates" ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300"
-          }`}
-        >
-          テンプレート管理
-        </button>
+        {[
+          { key: "properties", label: "物件管理" },
+          { key: "categories", label: "カテゴリ管理" },
+          { key: "templates", label: "テンプレート管理" },
+        ].map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={`rounded-xl px-5 py-2 text-sm font-medium border ${
+              activeTab === tab.key ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       <main className="p-4">
+        {activeTab === "properties" && <PropertySection />}
         {activeTab === "categories" && <CategorySection />}
         {activeTab === "templates" && <TemplateSection />}
       </main>
@@ -697,15 +708,98 @@ function TemplatePage() {
   );
 }
 
+function PropertySection() {
+  const [properties, setProperties] = useState([]);
+  const [name, setName] = useState("");
+
+  async function load() {
+    const res = await fetch(`${API_BASE}/properties`);
+    const data = await res.json();
+    setProperties(data.properties || []);
+  }
+
+  async function add() {
+    if (!name.trim()) { alert("物件名を入力してください"); return; }
+    const res = await fetch(`${API_BASE}/properties`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) { alert("同じ物件名がすでに登録されています"); return; }
+    setName("");
+    load();
+  }
+
+  async function remove(id) {
+    if (!confirm("この物件を削除しますか？")) return;
+    await fetch(`${API_BASE}/properties/${id}`, { method: "DELETE" });
+    load();
+  }
+
+  useEffect(() => { load(); }, []);
+
+  return (
+    <div className="grid grid-cols-12 gap-4">
+      <section className="col-span-12 lg:col-span-4 bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+        <h2 className="font-bold text-lg mb-4">物件を追加</h2>
+        <div className="space-y-4">
+          <div>
+            <label className="text-sm font-bold">物件名 <span className="text-red-500">*</span></label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && add()}
+              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+              placeholder="例：FFFホテル"
+            />
+          </div>
+          <button onClick={add} className="w-full rounded-xl bg-blue-600 text-white py-3 font-bold text-sm">
+            追加
+          </button>
+        </div>
+      </section>
+
+      <section className="col-span-12 lg:col-span-8 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="p-5 border-b border-slate-200">
+          <h2 className="font-bold text-lg">登録済み物件</h2>
+          <p className="text-xs text-slate-500">ゲストのチャット開始時に選択肢として表示されます</p>
+        </div>
+        <div className="divide-y divide-slate-200">
+          {properties.length === 0 && (
+            <div className="p-6 text-sm text-slate-500">物件が登録されていません。</div>
+          )}
+          {properties.map((p) => (
+            <div key={p.id} className="px-5 py-4 flex items-center justify-between">
+              <span className="font-medium">{p.name}</span>
+              <button
+                onClick={() => remove(p.id)}
+                className="rounded-xl border border-red-200 text-red-600 px-3 py-2 text-sm"
+              >
+                削除
+              </button>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function CategorySection() {
   const [categories, setCategories] = useState([]);
+  const [properties, setProperties] = useState([]);
   const [form, setForm] = useState({ name: "", property_name: "", is_escalation: false });
   const [editing, setEditing] = useState(null);
 
   async function load() {
-    const res = await fetch(`${API_BASE}/categories`);
-    const data = await res.json();
-    setCategories(data.categories || []);
+    const [catRes, propRes] = await Promise.all([
+      fetch(`${API_BASE}/categories`),
+      fetch(`${API_BASE}/properties`),
+    ]);
+    const catData = await catRes.json();
+    const propData = await propRes.json();
+    setCategories(catData.categories || []);
+    setProperties(propData.properties || []);
   }
 
   async function save() {
@@ -758,13 +852,17 @@ function CategorySection() {
             />
           </div>
           <div>
-            <label className="text-sm font-bold">物件名（空欄 = 全物件共通）</label>
-            <input
+            <label className="text-sm font-bold">物件名（未選択 = 全物件共通）</label>
+            <select
               value={form.property_name}
               onChange={(e) => setForm({ ...form, property_name: e.target.value })}
-              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
-              placeholder="例：FFFホテル"
-            />
+              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none bg-white"
+            >
+              <option value="">全物件共通</option>
+              {properties.map((p) => (
+                <option key={p.id} value={p.name}>{p.name}</option>
+              ))}
+            </select>
           </div>
           <label className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 p-3 cursor-pointer">
             <input
@@ -844,6 +942,7 @@ function CategorySection() {
 
 function TemplateSection() {
   const [templates, setTemplates] = useState([]);
+  const [properties, setProperties] = useState([]);
   const [categories, setCategories] = useState([]);
   const [rootTemplates, setRootTemplates] = useState([]);
   const [form, setForm] = useState({
@@ -863,9 +962,14 @@ function TemplateSection() {
   }
 
   async function loadCategories() {
-    const res = await fetch(`${API_BASE}/categories`);
-    const data = await res.json();
-    setCategories(data.categories || []);
+    const [catRes, propRes] = await Promise.all([
+      fetch(`${API_BASE}/categories`),
+      fetch(`${API_BASE}/properties`),
+    ]);
+    const catData = await catRes.json();
+    const propData = await propRes.json();
+    setCategories(catData.categories || []);
+    setProperties(propData.properties || []);
   }
 
   async function loadRootTemplates(propertyName, category) {
@@ -914,12 +1018,16 @@ function TemplateSection() {
         <div className="space-y-4">
           <div>
             <label className="text-sm font-bold">物件名</label>
-            <input
+            <select
               value={form.property_name}
               onChange={(e) => setForm({ ...form, property_name: e.target.value, parent_id: null })}
-              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
-              placeholder="例：FFFホテル"
-            />
+              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none bg-white"
+            >
+              <option value="">選択してください</option>
+              {properties.map((p) => (
+                <option key={p.id} value={p.name}>{p.name}</option>
+              ))}
+            </select>
           </div>
 
           <div>
