@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 const API_BASE = "https://gusk-chat-system.onrender.com";
@@ -27,8 +27,11 @@ function getStatusCounts(roomList) {
 
 function filterRooms(roomList, filter) {
   if (filter === "all") return roomList;
+  if (filter === "escalated") return roomList.filter((r) => r.mode === "operator");
   return roomList.filter((room) => room.status === filter);
 }
+
+// ── オペレーターページ ─────────────────────────────────────────────────────────
 
 function OperatorPage() {
   const [rooms, setRooms] = useState([]);
@@ -36,22 +39,42 @@ function OperatorPage() {
   const [filter, setFilter] = useState("all");
   const [messages, setMessages] = useState([]);
   const [reply, setReply] = useState("");
+  const prevEscalatedIds = useRef(new Set());
 
-  const selected = rooms.find((room) => room.id === selectedId) ?? rooms[0] ?? null;
-
+  const selected = rooms.find((r) => r.id === selectedId) ?? null;
   const filteredRooms = useMemo(() => filterRooms(rooms, filter), [rooms, filter]);
   const counts = useMemo(() => getStatusCounts(rooms), [rooms]);
+  const escalatedCount = useMemo(() => rooms.filter((r) => r.mode === "operator").length, [rooms]);
+
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
 
   async function loadRooms() {
     const res = await fetch(`${API_BASE}/operator/chat-rooms`);
     const data = await res.json();
     const list = data.chat_rooms || [];
-    setRooms(list);
 
-    if (!selectedId && list.length > 0) {
-      setSelectedId(list[0].id);
-      loadMessages(list[0].id);
-    }
+    const newEscalated = list.filter((r) => r.mode === "operator");
+    newEscalated.forEach((room) => {
+      if (!prevEscalatedIds.current.has(room.id) && Notification.permission === "granted") {
+        new Notification("【対応必要】エスカレーション", {
+          body: `${room.property_name} ${room.room_number}号室 - ${room.category || "カテゴリ未設定"}`,
+        });
+      }
+    });
+    prevEscalatedIds.current = new Set(newEscalated.map((r) => r.id));
+
+    setRooms(list);
+    setSelectedId((prev) => {
+      if (!prev && list.length > 0) {
+        loadMessages(list[0].id);
+        return list[0].id;
+      }
+      return prev;
+    });
   }
 
   async function loadMessages(roomId) {
@@ -68,27 +91,20 @@ function OperatorPage() {
 
   async function sendReply() {
     if (!selected || !reply.trim()) return;
-
     await fetch(`${API_BASE}/guest/chat/${selected.id}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sender_type: "operator",
-        message: reply,
-      }),
+      body: JSON.stringify({ sender_type: "operator", message: reply }),
     });
-
     setReply("");
     await loadMessages(selected.id);
   }
 
   async function updateStatus(status) {
     if (!selected) return;
-
     await fetch(`${API_BASE}/operator/chat-rooms/${selected.id}/status?status=${status}`, {
       method: "PATCH",
     });
-
     await loadRooms();
   }
 
@@ -110,22 +126,26 @@ function OperatorPage() {
           <p className="text-xs text-slate-500">物件別テンプレート + 有人切替</p>
         </div>
         <div className="flex items-center gap-3">
+          {escalatedCount > 0 && (
+            <div className="flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700 animate-pulse">
+              <Icon label="!" className="rounded-full bg-red-100 text-red-600" />
+              エスカレーション {escalatedCount}件
+            </div>
+          )}
           <div className="hidden md:flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-700">
             <Icon label="⏱" /> 有人対応時間内 10:00〜19:00
           </div>
-          <div className="rounded-full bg-slate-900 text-white px-4 py-2 text-sm">田中 / オペレータ</div>
+          <a href="/templates" className="rounded-full bg-slate-900 text-white px-4 py-2 text-sm">
+            テンプレート管理
+          </a>
         </div>
       </header>
 
       <main className="grid grid-cols-12 gap-4 p-4 h-[calc(100vh-64px)]">
+        {/* 左カラム：チャットルーム一覧 */}
         <aside className="col-span-12 lg:col-span-3 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
           <div className="p-4 border-b border-slate-200">
-            <div className="flex items-center gap-2 bg-slate-100 rounded-xl px-3 py-2">
-              <Icon label="⌕" className="text-slate-400" />
-              <input className="bg-transparent outline-none text-sm w-full" placeholder="物件・部屋で検索" />
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 mt-3">
+            <div className="grid grid-cols-2 gap-2 mt-1">
               <button
                 onClick={() => setFilter("all")}
                 className={`rounded-xl px-3 py-2 text-sm border ${
@@ -134,7 +154,14 @@ function OperatorPage() {
               >
                 すべて
               </button>
-
+              <button
+                onClick={() => setFilter("escalated")}
+                className={`rounded-xl px-3 py-2 text-sm border ${
+                  filter === "escalated" ? "bg-red-600 text-white border-red-600" : "bg-white border-red-200 text-red-600"
+                }`}
+              >
+                要対応 {escalatedCount > 0 ? escalatedCount : ""}
+              </button>
               {Object.entries(STATUS).map(([key, item]) => (
                 <button
                   key={key}
@@ -156,54 +183,50 @@ function OperatorPage() {
                 onClick={() => selectRoom(room)}
                 className={`w-full text-left rounded-2xl border p-4 transition ${
                   selected?.id === room.id ? "border-slate-900 bg-slate-50" : "border-slate-200 bg-white hover:bg-slate-50"
-                }`}
+                } ${room.mode === "operator" ? "border-l-4 border-l-red-400" : ""}`}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <div className="font-bold flex items-center gap-2">
-                      {room.status === "unassigned" && (
+                      {room.mode === "operator" && (
                         <Icon label="!" className="rounded-full bg-red-100 text-red-600" />
                       )}
                       {room.property_name} {room.room_number}
                     </div>
-                    <div className="text-xs text-slate-500 mt-1">{room.category || "カテゴリ未設定"}</div>
+                    <div className="text-xs text-slate-500 mt-1">{room.category || "カテゴリ未選択"}</div>
                   </div>
-
-                  <span className={`text-xs px-2 py-1 rounded-full border ${STATUS[room.status]?.className || ""}`}>
-                    {STATUS[room.status]?.label || room.status}
-                  </span>
+                  <div className="flex flex-col items-end gap-1">
+                    <span className={`text-xs px-2 py-1 rounded-full border ${STATUS[room.status]?.className || ""}`}>
+                      {STATUS[room.status]?.label || room.status}
+                    </span>
+                    {room.mode === "operator" && (
+                      <span className="text-xs px-2 py-1 rounded-full bg-red-100 text-red-700 border border-red-200">
+                        有人対応
+                      </span>
+                    )}
+                  </div>
                 </div>
-
-                <p className="text-sm text-slate-600 mt-3 line-clamp-2">
+                <p className="text-sm text-slate-600 mt-3 line-clamp-1">
                   {room.guest_contact || "連絡先未登録"}
                 </p>
-
-                <div className="flex items-center justify-between mt-3 text-xs text-slate-400">
-                  <span>担当：{room.assigned_operator || "未割当"}</span>
-                  <span>#{room.id}</span>
-                </div>
+                <div className="text-xs text-slate-400 mt-1">#{room.id}</div>
               </button>
             ))}
           </div>
         </aside>
 
+        {/* 中央カラム：チャット */}
         <section className="col-span-12 lg:col-span-6 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
           <div className="p-4 border-b border-slate-200 flex items-center justify-between">
             <div>
-              <div className="flex items-center gap-2">
-                <Icon label="□" className="text-slate-500" />
-                <h2 className="font-bold text-lg">
-                  {selected ? `${selected.property_name} / ${selected.room_number}号室` : "チャット未選択"}
-                </h2>
-                {selected?.status === "unassigned" && (
-                  <span className="rounded-full bg-red-100 text-red-700 px-2 py-1 text-xs">未対応</span>
-                )}
-              </div>
+              <h2 className="font-bold text-lg">
+                {selected ? `${selected.property_name} / ${selected.room_number}号室` : "チャット未選択"}
+              </h2>
               <p className="text-xs text-slate-500 mt-1">
-                カテゴリ：{selected?.category || "-"} / チャットID：{selected?.id || "-"}
+                カテゴリ：{selected?.category || "-"} / ID：{selected?.id || "-"} /
+                モード：{selected?.mode === "operator" ? "有人対応" : "ボット"}
               </p>
             </div>
-
             {selected && (
               <span className={`text-xs px-3 py-1.5 rounded-full border ${STATUS[selected.status]?.className || ""}`}>
                 {STATUS[selected.status]?.label || selected.status}
@@ -215,7 +238,6 @@ function OperatorPage() {
             {messages.map((message) => {
               const isGuest = message.sender_type === "guest";
               const isSystem = message.sender_type === "system";
-
               return (
                 <div key={message.id} className={`flex ${isGuest ? "justify-start" : "justify-end"}`}>
                   <div
@@ -228,9 +250,10 @@ function OperatorPage() {
                     }`}
                   >
                     <div className="text-xs opacity-70 mb-1">
-                      {message.sender_type}・{new Date(message.created_at).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}
+                      {message.sender_type === "system" ? "ボット" : message.sender_type}・
+                      {new Date(message.created_at).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}
                     </div>
-                    <p className="text-sm leading-relaxed">{message.message}</p>
+                    <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.message}</p>
                   </div>
                 </div>
               );
@@ -238,22 +261,11 @@ function OperatorPage() {
           </div>
 
           <div className="p-4 border-t border-slate-200 bg-white">
-            <div className="flex gap-2 mb-3 overflow-x-auto">
-              {["鍵案内", "Wi-Fi", "駐車場", "チェックアウト", "緊急電話案内"].map((label) => (
-                <button
-                  key={label}
-                  onClick={() => setReply(label)}
-                  className="shrink-0 rounded-full border border-slate-200 px-3 py-1.5 text-xs hover:bg-slate-50"
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
             <div className="flex items-center gap-2">
               <input
                 value={reply}
                 onChange={(e) => setReply(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendReply()}
                 className="flex-1 rounded-xl border border-slate-200 px-4 py-3 outline-none text-sm"
                 placeholder="メッセージを入力..."
               />
@@ -267,6 +279,7 @@ function OperatorPage() {
           </div>
         </section>
 
+        {/* 右カラム：対応情報 */}
         <aside className="col-span-12 lg:col-span-3 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-y-auto">
           <div className="p-4 border-b border-slate-200">
             <h3 className="font-bold flex items-center gap-2">
@@ -290,8 +303,14 @@ function OperatorPage() {
                   <span className="font-medium">{selected.guest_contact || "-"}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-500">担当</span>
-                  <span className="font-medium">{selected.assigned_operator || "未割当"}</span>
+                  <span className="text-slate-500">カテゴリ</span>
+                  <span className="font-medium">{selected.category || "-"}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">モード</span>
+                  <span className={`font-medium ${selected.mode === "operator" ? "text-red-600" : "text-slate-700"}`}>
+                    {selected.mode === "operator" ? "有人対応" : "ボット"}
+                  </span>
                 </div>
               </div>
 
@@ -325,9 +344,10 @@ function OperatorPage() {
   );
 }
 
+// ── ゲストページ ───────────────────────────────────────────────────────────────
+
 function GuestPage() {
   const params = new URLSearchParams(window.location.search);
-
   const propertyFromUrl = params.get("property") || "";
   const roomFromUrl = params.get("room") || "";
   const isStayLink = Boolean(propertyFromUrl && roomFromUrl);
@@ -336,35 +356,24 @@ function GuestPage() {
   const [propertyName, setPropertyName] = useState(propertyFromUrl);
   const [roomNumber, setRoomNumber] = useState(roomFromUrl);
   const [guestContact, setGuestContact] = useState("");
-  const [category, setCategory] = useState("");
-  const [message, setMessage] = useState("");
   const [messages, setMessages] = useState([]);
+  const [textInput, setTextInput] = useState("");
 
-  const categories = [
-    "鍵・入室",
-    "Wi-Fi",
-    "駐車場",
-    "チェックアウト",
-    "設備トラブル",
-    "忘れ物",
-    "その他",
-  ];
+  // ボットフロー状態: "form" | "category" | "templates" | "escalated" | "chat"
+  const [botPhase, setBotPhase] = useState("form");
+  const [categories, setCategories] = useState([]);
+  const [templateStack, setTemplateStack] = useState([]); // スタック（階層ナビ用）
+
+  const currentTemplates = templateStack[templateStack.length - 1] || [];
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
   async function startChat() {
-    if (!propertyName.trim()) {
-      alert("物件名を入力してください");
-      return;
-    }
-
-    if (!guestContact.trim()) {
-      alert("メールアドレスまたは電話番号を入力してください");
-      return;
-    }
-
-    if (!category) {
-      alert("お問い合わせ内容を選択してください");
-      return;
-    }
+    if (!propertyName.trim()) { alert("物件名を入力してください"); return; }
+    if (!guestContact.trim()) { alert("メールアドレスまたは電話番号を入力してください"); return; }
 
     const res = await fetch(`${API_BASE}/guest/chat/start`, {
       method: "POST",
@@ -373,46 +382,89 @@ function GuestPage() {
         property_name: propertyName,
         room_number: roomNumber || "未設定",
         guest_contact: guestContact,
-        category,
       }),
     });
-
     const data = await res.json();
-    setRoomId(data.chat_room_id);
-    loadMessages(data.chat_room_id);
+    const id = data.chat_room_id;
+    setRoomId(id);
+    await loadMessages(id);
+
+    const catRes = await fetch(`${API_BASE}/categories?property_name=${encodeURIComponent(propertyName)}`);
+    const catData = await catRes.json();
+    setCategories(catData.categories || []);
+    setBotPhase("category");
+  }
+
+  async function selectCategory(cat) {
+    const res = await fetch(`${API_BASE}/guest/chat/${roomId}/select-category`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ category_id: cat.id }),
+    });
+    const data = await res.json();
+    await loadMessages(roomId);
+
+    if (data.escalated) {
+      setBotPhase("escalated");
+    } else if (data.templates.length > 0) {
+      setTemplateStack([data.templates]);
+      setBotPhase("templates");
+    } else {
+      setBotPhase("chat");
+    }
+  }
+
+  async function selectTemplate(template) {
+    const res = await fetch(`${API_BASE}/guest/chat/${roomId}/select-template`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ template_id: template.id }),
+    });
+    const data = await res.json();
+    await loadMessages(roomId);
+
+    if (data.children.length > 0) {
+      setTemplateStack((prev) => [...prev, data.children]);
+    } else {
+      setBotPhase("chat");
+    }
+  }
+
+  function goBackTemplates() {
+    if (templateStack.length <= 1) {
+      setTemplateStack([]);
+      setBotPhase("category");
+    } else {
+      setTemplateStack((prev) => prev.slice(0, -1));
+    }
+  }
+
+  function goBackToCategory() {
+    setTemplateStack([]);
+    setBotPhase("category");
   }
 
   async function loadMessages(id = roomId) {
     if (!id) return;
-
     const res = await fetch(`${API_BASE}/guest/chat/${id}/messages`);
     const data = await res.json();
     setMessages(data.messages || []);
   }
 
-  async function sendMessage() {
-    if (!roomId || !message.trim()) return;
-
+  async function sendTextMessage() {
+    if (!roomId || !textInput.trim()) return;
     await fetch(`${API_BASE}/guest/chat/${roomId}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sender_type: "guest",
-        message,
-      }),
+      body: JSON.stringify({ sender_type: "guest", message: textInput }),
     });
-
-    setMessage("");
+    setTextInput("");
     loadMessages(roomId);
   }
 
   useEffect(() => {
     if (!roomId) return;
-
-    const timer = setInterval(() => {
-      loadMessages(roomId);
-    }, 3000);
-
+    const timer = setInterval(() => loadMessages(roomId), 3000);
     return () => clearInterval(timer);
   }, [roomId]);
 
@@ -427,7 +479,9 @@ function GuestPage() {
         </header>
 
         <main className="flex-1 overflow-y-auto px-4 py-4 space-y-4 pb-28">
-          {!roomId && (
+
+          {/* ── フォーム画面 ── */}
+          {botPhase === "form" && (
             <section className="space-y-4">
               {isStayLink ? (
                 <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
@@ -446,7 +500,6 @@ function GuestPage() {
                       placeholder="例：FFFホテル"
                     />
                   </div>
-
                   <div>
                     <label className="text-sm font-bold">部屋番号 任意</label>
                     <input
@@ -465,27 +518,8 @@ function GuestPage() {
                   value={guestContact}
                   onChange={(e) => setGuestContact(e.target.value)}
                   className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
-                  placeholder="例：guest@example.com / 090..."
+                  placeholder="例：guest@example.com / 090-xxxx-xxxx"
                 />
-              </div>
-
-              <div>
-                <label className="text-sm font-bold">お問い合わせ内容</label>
-                <div className="grid grid-cols-2 gap-2 mt-2">
-                  {categories.map((item) => (
-                    <button
-                      key={item}
-                      onClick={() => setCategory(item)}
-                      className={`rounded-xl border px-3 py-3 text-sm text-left ${
-                        category === item
-                          ? "bg-blue-600 text-white border-blue-600"
-                          : "bg-white border-slate-300"
-                      }`}
-                    >
-                      {item}
-                    </button>
-                  ))}
-                </div>
               </div>
 
               <button
@@ -497,46 +531,114 @@ function GuestPage() {
             </section>
           )}
 
-          {roomId && (
+          {/* ── チャット履歴（フォーム以外で常に表示）── */}
+          {botPhase !== "form" && (
             <>
               <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-xs text-slate-500">
-                チャットID：{roomId} / {propertyName} {roomNumber && `${roomNumber}号室`}
+                {propertyName} {roomNumber && `${roomNumber}号室`} / チャットID：{roomId}
               </div>
 
               <div className="space-y-3">
                 {messages.map((m) => {
                   const isGuest = m.sender_type === "guest";
-
                   return (
                     <div key={m.id} className={`flex ${isGuest ? "justify-end" : "justify-start"}`}>
                       <div
                         className={`max-w-[82%] rounded-2xl px-4 py-3 text-sm ${
-                          isGuest
-                            ? "bg-blue-600 text-white"
-                            : "bg-slate-100 text-slate-800"
+                          isGuest ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-800"
                         }`}
                       >
-                        <div>{m.message}</div>
+                        <p className="whitespace-pre-wrap">{m.message}</p>
                       </div>
                     </div>
                   );
                 })}
+                <div ref={messagesEndRef} />
               </div>
             </>
           )}
+
+          {/* ── カテゴリ選択 ── */}
+          {botPhase === "category" && (
+            <div className="space-y-3">
+              <p className="text-sm font-bold text-slate-700">お問い合わせ内容をお選びください</p>
+              <div className="grid grid-cols-2 gap-2">
+                {categories.map((cat) => (
+                  <button
+                    key={cat.id}
+                    onClick={() => selectCategory(cat)}
+                    className={`rounded-xl border px-3 py-4 text-sm text-left font-medium transition ${
+                      cat.is_escalation
+                        ? "bg-red-50 border-red-300 text-red-700 hover:bg-red-100"
+                        : "bg-white border-slate-300 hover:bg-slate-50"
+                    }`}
+                  >
+                    {cat.is_escalation && <span className="block text-xs text-red-500 mb-1">緊急</span>}
+                    {cat.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── テンプレート選択（段階的） ── */}
+          {botPhase === "templates" && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-bold text-slate-700">詳しい内容をお選びください</p>
+                <button onClick={goBackTemplates} className="text-xs text-blue-600 underline">
+                  {templateStack.length <= 1 ? "カテゴリに戻る" : "前に戻る"}
+                </button>
+              </div>
+              <div className="space-y-2">
+                {currentTemplates.map((tmpl) => (
+                  <button
+                    key={tmpl.id}
+                    onClick={() => selectTemplate(tmpl)}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-left hover:bg-slate-50 transition"
+                  >
+                    {tmpl.title}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── エスカレーション待機 ── */}
+          {botPhase === "escalated" && (
+            <div className="rounded-2xl bg-red-50 border border-red-200 p-5 text-center space-y-2">
+              <div className="text-2xl">📞</div>
+              <p className="font-bold text-red-700">スタッフに接続中</p>
+              <p className="text-sm text-red-600">担当スタッフがメッセージをご確認次第、対応いたします。</p>
+            </div>
+          )}
+
+          {/* ── 自由入力チャット ── */}
+          {botPhase === "chat" && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-slate-500">他にご不明な点がありましたらご入力ください</p>
+                <button onClick={goBackToCategory} className="text-xs text-blue-600 underline">
+                  カテゴリに戻る
+                </button>
+              </div>
+            </div>
+          )}
         </main>
 
-        {roomId && (
+        {/* ── フッター：自由入力エリア（escalated と chat モード） ── */}
+        {(botPhase === "escalated" || botPhase === "chat") && (
           <footer className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] bg-white border-t border-slate-200 p-3">
             <div className="flex gap-2">
               <input
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
+                value={textInput}
+                onChange={(e) => setTextInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && sendTextMessage()}
                 className="flex-1 rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
                 placeholder="メッセージを入力"
               />
               <button
-                onClick={sendMessage}
+                onClick={sendTextMessage}
                 className="rounded-xl bg-blue-600 text-white px-4 font-bold"
               >
                 送信
@@ -549,96 +651,18 @@ function GuestPage() {
   );
 }
 
+// ── テンプレート・カテゴリ管理ページ ──────────────────────────────────────────
+
 function TemplatePage() {
-  const [templates, setTemplates] = useState([]);
-  const [form, setForm] = useState({
-    property_name: "",
-    category: "",
-    title: "",
-    body: "",
-    is_emergency: "false",
-    active: "true",
-  });
-
-  const categories = [
-    "鍵・入室",
-    "Wi-Fi",
-    "駐車場",
-    "チェックアウト",
-    "設備トラブル",
-    "忘れ物",
-    "その他",
-  ];
-
-  async function loadTemplates() {
-    const res = await fetch(`${API_BASE}/operator/templates`);
-    const data = await res.json();
-    setTemplates(data.templates || []);
-  }
-
-  async function createTemplate() {
-    if (!form.property_name.trim()) {
-      alert("物件名を入力してください");
-      return;
-    }
-
-    if (!form.category.trim()) {
-      alert("カテゴリを選択してください");
-      return;
-    }
-
-    if (!form.title.trim()) {
-      alert("タイトルを入力してください");
-      return;
-    }
-
-    if (!form.body.trim()) {
-      alert("本文を入力してください");
-      return;
-    }
-
-    await fetch(`${API_BASE}/operator/templates`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(form),
-    });
-
-    setForm({
-      property_name: "",
-      category: "",
-      title: "",
-      body: "",
-      is_emergency: "false",
-      active: "true",
-    });
-
-    loadTemplates();
-  }
-
-  async function deleteTemplate(id) {
-    if (!confirm("このテンプレートを削除しますか？")) return;
-
-    await fetch(`${API_BASE}/operator/templates/${id}`, {
-      method: "DELETE",
-    });
-
-    loadTemplates();
-  }
-
-  useEffect(() => {
-    loadTemplates();
-  }, []);
+  const [activeTab, setActiveTab] = useState("templates"); // "templates" | "categories"
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900">
       <header className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold">テンプレート管理</h1>
-          <p className="text-xs text-slate-500">物件別・カテゴリ別の無人返信テンプレート</p>
+          <h1 className="text-xl font-bold">管理ページ</h1>
+          <p className="text-xs text-slate-500">テンプレートとカテゴリの設定</p>
         </div>
-
         <div className="flex gap-2">
           <a href="/operator" className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm">
             チャット管理へ
@@ -646,177 +670,390 @@ function TemplatePage() {
         </div>
       </header>
 
-      <main className="grid grid-cols-12 gap-4 p-4">
-        <section className="col-span-12 lg:col-span-4 bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
-          <h2 className="font-bold text-lg mb-4">新規テンプレート作成</h2>
+      <div className="px-6 pt-4 flex gap-2">
+        <button
+          onClick={() => setActiveTab("categories")}
+          className={`rounded-xl px-5 py-2 text-sm font-medium border ${
+            activeTab === "categories" ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300"
+          }`}
+        >
+          カテゴリ管理
+        </button>
+        <button
+          onClick={() => setActiveTab("templates")}
+          className={`rounded-xl px-5 py-2 text-sm font-medium border ${
+            activeTab === "templates" ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-300"
+          }`}
+        >
+          テンプレート管理
+        </button>
+      </div>
 
-          <div className="space-y-4">
-            <div>
-              <label className="text-sm font-bold">物件名</label>
-              <input
-                value={form.property_name}
-                onChange={(e) => setForm({ ...form, property_name: e.target.value })}
-                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
-                placeholder="例：FFFホテル"
-              />
-            </div>
-
-            <div>
-              <label className="text-sm font-bold">カテゴリ</label>
-              <select
-                value={form.category}
-                onChange={(e) => setForm({ ...form, category: e.target.value })}
-                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none bg-white"
-              >
-                <option value="">選択してください</option>
-                {categories.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="text-sm font-bold">タイトル</label>
-              <input
-                value={form.title}
-                onChange={(e) => setForm({ ...form, title: e.target.value })}
-                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
-                placeholder="例：FFFホテル 鍵案内"
-              />
-            </div>
-
-            <div>
-              <label className="text-sm font-bold">本文</label>
-              <textarea
-                value={form.body}
-                onChange={(e) => setForm({ ...form, body: e.target.value })}
-                className="mt-1 w-full min-h-[180px] rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
-                placeholder="ゲストに自動返信する文章を入力してください"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <label className="rounded-xl border border-slate-200 p-3 text-sm flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={form.is_emergency === "true"}
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      is_emergency: e.target.checked ? "true" : "false",
-                    })
-                  }
-                />
-                緊急カテゴリ
-              </label>
-
-              <label className="rounded-xl border border-slate-200 p-3 text-sm flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={form.active === "true"}
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      active: e.target.checked ? "true" : "false",
-                    })
-                  }
-                />
-                有効
-              </label>
-            </div>
-
-            <button
-              onClick={createTemplate}
-              className="w-full rounded-xl bg-blue-600 text-white py-3 font-bold"
-            >
-              保存
-            </button>
-          </div>
-        </section>
-
-        <section className="col-span-12 lg:col-span-8 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="p-5 border-b border-slate-200 flex items-center justify-between">
-            <div>
-              <h2 className="font-bold text-lg">登録済みテンプレート</h2>
-              <p className="text-xs text-slate-500">チャット開始時に物件名 + カテゴリで自動返信されます</p>
-            </div>
-
-            <button
-              onClick={loadTemplates}
-              className="rounded-xl border border-slate-300 px-4 py-2 text-sm"
-            >
-              更新
-            </button>
-          </div>
-
-          <div className="divide-y divide-slate-200">
-            {templates.length === 0 && (
-              <div className="p-6 text-sm text-slate-500">
-                まだテンプレートが登録されていません。
-              </div>
-            )}
-
-            {templates.map((template) => (
-              <div key={template.id} className="p-5">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-bold text-lg">{template.title}</span>
-                      <span className="rounded-full bg-slate-100 text-slate-700 px-2 py-1 text-xs">
-                        {template.property_name}
-                      </span>
-                      <span className="rounded-full bg-blue-100 text-blue-700 px-2 py-1 text-xs">
-                        {template.category}
-                      </span>
-                      {template.is_emergency === "true" && (
-                        <span className="rounded-full bg-red-100 text-red-700 px-2 py-1 text-xs">
-                          緊急
-                        </span>
-                      )}
-                      {template.active === "true" ? (
-                        <span className="rounded-full bg-emerald-100 text-emerald-700 px-2 py-1 text-xs">
-                          有効
-                        </span>
-                      ) : (
-                        <span className="rounded-full bg-slate-100 text-slate-500 px-2 py-1 text-xs">
-                          無効
-                        </span>
-                      )}
-                    </div>
-
-                    <p className="mt-3 text-sm text-slate-700 whitespace-pre-wrap">
-                      {template.body}
-                    </p>
-                  </div>
-
-                  <button
-                    onClick={() => deleteTemplate(template.id)}
-                    className="shrink-0 rounded-xl border border-red-200 text-red-600 px-3 py-2 text-sm"
-                  >
-                    削除
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
+      <main className="p-4">
+        {activeTab === "categories" && <CategorySection />}
+        {activeTab === "templates" && <TemplateSection />}
       </main>
     </div>
   );
 }
 
+function CategorySection() {
+  const [categories, setCategories] = useState([]);
+  const [form, setForm] = useState({ name: "", property_name: "", is_escalation: false });
+  const [editing, setEditing] = useState(null);
+
+  async function load() {
+    const res = await fetch(`${API_BASE}/categories`);
+    const data = await res.json();
+    setCategories(data.categories || []);
+  }
+
+  async function save() {
+    if (!form.name.trim()) { alert("カテゴリ名を入力してください"); return; }
+    const body = { name: form.name, property_name: form.property_name || null, is_escalation: form.is_escalation };
+
+    if (editing) {
+      await fetch(`${API_BASE}/categories/${editing}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      setEditing(null);
+    } else {
+      await fetch(`${API_BASE}/categories`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    }
+    setForm({ name: "", property_name: "", is_escalation: false });
+    load();
+  }
+
+  async function remove(id) {
+    if (!confirm("このカテゴリを削除しますか？")) return;
+    await fetch(`${API_BASE}/categories/${id}`, { method: "DELETE" });
+    load();
+  }
+
+  function startEdit(cat) {
+    setEditing(cat.id);
+    setForm({ name: cat.name, property_name: cat.property_name || "", is_escalation: cat.is_escalation });
+  }
+
+  useEffect(() => { load(); }, []);
+
+  return (
+    <div className="grid grid-cols-12 gap-4">
+      <section className="col-span-12 lg:col-span-4 bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+        <h2 className="font-bold text-lg mb-4">{editing ? "カテゴリを編集" : "新規カテゴリ追加"}</h2>
+        <div className="space-y-4">
+          <div>
+            <label className="text-sm font-bold">カテゴリ名 <span className="text-red-500">*</span></label>
+            <input
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+              placeholder="例：チェックインできない"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-bold">物件名（空欄 = 全物件共通）</label>
+            <input
+              value={form.property_name}
+              onChange={(e) => setForm({ ...form, property_name: e.target.value })}
+              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+              placeholder="例：FFFホテル"
+            />
+          </div>
+          <label className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 p-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.is_escalation}
+              onChange={(e) => setForm({ ...form, is_escalation: e.target.checked })}
+              className="w-4 h-4"
+            />
+            <div>
+              <div className="text-sm font-bold text-red-700">即エスカレーション</div>
+              <div className="text-xs text-red-500">選択時に24時間オペレーターへ転送</div>
+            </div>
+          </label>
+          <div className="flex gap-2">
+            <button onClick={save} className="flex-1 rounded-xl bg-blue-600 text-white py-3 font-bold text-sm">
+              {editing ? "更新" : "追加"}
+            </button>
+            {editing && (
+              <button
+                onClick={() => { setEditing(null); setForm({ name: "", property_name: "", is_escalation: false }); }}
+                className="rounded-xl border border-slate-300 px-4 py-3 text-sm"
+              >
+                キャンセル
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="col-span-12 lg:col-span-8 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="p-5 border-b border-slate-200">
+          <h2 className="font-bold text-lg">登録済みカテゴリ</h2>
+          <p className="text-xs text-slate-500">ゲストがチャット開始時に選ぶメニュー項目</p>
+        </div>
+        <div className="divide-y divide-slate-200">
+          {categories.length === 0 && (
+            <div className="p-6 text-sm text-slate-500">カテゴリが登録されていません。</div>
+          )}
+          {categories.map((cat) => (
+            <div key={cat.id} className="p-4 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div>
+                  <div className="font-medium flex items-center gap-2">
+                    {cat.name}
+                    {cat.is_escalation && (
+                      <span className="rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-xs border border-red-200">
+                        即エスカレーション
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-slate-500 mt-0.5">
+                    {cat.property_name ? `物件：${cat.property_name}` : "全物件共通"}
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <button
+                  onClick={() => startEdit(cat)}
+                  className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                >
+                  編集
+                </button>
+                <button
+                  onClick={() => remove(cat.id)}
+                  className="rounded-xl border border-red-200 text-red-600 px-3 py-2 text-sm"
+                >
+                  削除
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function TemplateSection() {
+  const [templates, setTemplates] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [rootTemplates, setRootTemplates] = useState([]);
+  const [form, setForm] = useState({
+    property_name: "",
+    category: "",
+    title: "",
+    body: "",
+    is_emergency: "false",
+    active: "true",
+    parent_id: null,
+  });
+
+  async function loadTemplates() {
+    const res = await fetch(`${API_BASE}/operator/templates`);
+    const data = await res.json();
+    setTemplates(data.templates || []);
+  }
+
+  async function loadCategories() {
+    const res = await fetch(`${API_BASE}/categories`);
+    const data = await res.json();
+    setCategories(data.categories || []);
+  }
+
+  async function loadRootTemplates(propertyName, category) {
+    if (!propertyName || !category) { setRootTemplates([]); return; }
+    const res = await fetch(
+      `${API_BASE}/operator/templates?property_name=${encodeURIComponent(propertyName)}&category=${encodeURIComponent(category)}&root_only=true`
+    );
+    const data = await res.json();
+    setRootTemplates(data.templates || []);
+  }
+
+  async function createTemplate() {
+    if (!form.property_name.trim()) { alert("物件名を入力してください"); return; }
+    if (!form.category.trim()) { alert("カテゴリを選択してください"); return; }
+    if (!form.title.trim()) { alert("タイトルを入力してください"); return; }
+    if (!form.body.trim()) { alert("本文を入力してください"); return; }
+
+    await fetch(`${API_BASE}/operator/templates`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(form),
+    });
+
+    setForm({ property_name: "", category: "", title: "", body: "", is_emergency: "false", active: "true", parent_id: null });
+    loadTemplates();
+  }
+
+  async function deleteTemplate(id) {
+    if (!confirm("このテンプレートを削除しますか？")) return;
+    await fetch(`${API_BASE}/operator/templates/${id}`, { method: "DELETE" });
+    loadTemplates();
+  }
+
+  useEffect(() => { loadTemplates(); loadCategories(); }, []);
+
+  useEffect(() => {
+    loadRootTemplates(form.property_name, form.category);
+  }, [form.property_name, form.category]);
+
+  const categoryNames = [...new Set(categories.map((c) => c.name))];
+
+  return (
+    <div className="grid grid-cols-12 gap-4">
+      <section className="col-span-12 lg:col-span-4 bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+        <h2 className="font-bold text-lg mb-4">新規テンプレート作成</h2>
+        <div className="space-y-4">
+          <div>
+            <label className="text-sm font-bold">物件名</label>
+            <input
+              value={form.property_name}
+              onChange={(e) => setForm({ ...form, property_name: e.target.value, parent_id: null })}
+              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+              placeholder="例：FFFホテル"
+            />
+          </div>
+
+          <div>
+            <label className="text-sm font-bold">カテゴリ</label>
+            <select
+              value={form.category}
+              onChange={(e) => setForm({ ...form, category: e.target.value, parent_id: null })}
+              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none bg-white"
+            >
+              <option value="">選択してください</option>
+              {categoryNames.map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-sm font-bold">親テンプレート（任意）</label>
+            <select
+              value={form.parent_id ?? ""}
+              onChange={(e) => setForm({ ...form, parent_id: e.target.value ? Number(e.target.value) : null })}
+              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none bg-white"
+            >
+              <option value="">なし（第1階層）</option>
+              {rootTemplates.map((t) => (
+                <option key={t.id} value={t.id}>{t.title}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-sm font-bold">タイトル（ボタン名）</label>
+            <input
+              value={form.title}
+              onChange={(e) => setForm({ ...form, title: e.target.value })}
+              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+              placeholder="例：鍵の場所を確認したい"
+            />
+          </div>
+
+          <div>
+            <label className="text-sm font-bold">本文（ボット返信内容）</label>
+            <textarea
+              value={form.body}
+              onChange={(e) => setForm({ ...form, body: e.target.value })}
+              className="mt-1 w-full min-h-[120px] rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+              placeholder="ゲストへの自動返信内容を入力してください"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label className="rounded-xl border border-slate-200 p-3 text-sm flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.is_emergency === "true"}
+                onChange={(e) => setForm({ ...form, is_emergency: e.target.checked ? "true" : "false" })}
+              />
+              緊急カテゴリ
+            </label>
+            <label className="rounded-xl border border-slate-200 p-3 text-sm flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.active === "true"}
+                onChange={(e) => setForm({ ...form, active: e.target.checked ? "true" : "false" })}
+              />
+              有効
+            </label>
+          </div>
+
+          <button onClick={createTemplate} className="w-full rounded-xl bg-blue-600 text-white py-3 font-bold">
+            保存
+          </button>
+        </div>
+      </section>
+
+      <section className="col-span-12 lg:col-span-8 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="p-5 border-b border-slate-200 flex items-center justify-between">
+          <div>
+            <h2 className="font-bold text-lg">登録済みテンプレート</h2>
+            <p className="text-xs text-slate-500">親テンプレートがあるものは子階層として表示されます</p>
+          </div>
+          <button onClick={loadTemplates} className="rounded-xl border border-slate-300 px-4 py-2 text-sm">
+            更新
+          </button>
+        </div>
+        <div className="divide-y divide-slate-200">
+          {templates.length === 0 && (
+            <div className="p-6 text-sm text-slate-500">テンプレートが登録されていません。</div>
+          )}
+          {templates.map((t) => (
+            <div key={t.id} className="p-5">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {t.parent_id && (
+                      <span className="text-slate-400 text-sm">└</span>
+                    )}
+                    <span className="font-bold">{t.title}</span>
+                    <span className="rounded-full bg-slate-100 text-slate-700 px-2 py-0.5 text-xs">{t.property_name}</span>
+                    <span className="rounded-full bg-blue-100 text-blue-700 px-2 py-0.5 text-xs">{t.category}</span>
+                    {t.parent_id && (
+                      <span className="rounded-full bg-purple-100 text-purple-700 px-2 py-0.5 text-xs">子テンプレート</span>
+                    )}
+                    {t.is_emergency === "true" && (
+                      <span className="rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-xs">緊急</span>
+                    )}
+                    {t.active === "true" ? (
+                      <span className="rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5 text-xs">有効</span>
+                    ) : (
+                      <span className="rounded-full bg-slate-100 text-slate-500 px-2 py-0.5 text-xs">無効</span>
+                    )}
+                  </div>
+                  <p className="mt-2 text-sm text-slate-700 whitespace-pre-wrap line-clamp-3">{t.body}</p>
+                </div>
+                <button
+                  onClick={() => deleteTemplate(t.id)}
+                  className="shrink-0 rounded-xl border border-red-200 text-red-600 px-3 py-2 text-sm"
+                >
+                  削除
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+// ── ルーティング ───────────────────────────────────────────────────────────────
 
 function App() {
-  if (window.location.pathname.startsWith("/templates")) {
-    return <TemplatePage />;
-  }
-
-  if (window.location.pathname.startsWith("/operator")) {
-    return <OperatorPage />;
-  }
-
+  if (window.location.pathname.startsWith("/templates")) return <TemplatePage />;
+  if (window.location.pathname.startsWith("/operator")) return <OperatorPage />;
   return <GuestPage />;
 }
 
