@@ -39,6 +39,12 @@ function OperatorPage() {
   const [filter, setFilter] = useState("all");
   const [messages, setMessages] = useState([]);
   const [reply, setReply] = useState("");
+  const [settings, setSettings] = useState({
+    hours_start: "10:00",
+    hours_end: "19:00",
+    emergency_phone: "",
+    emergency_message: "",
+  });
   const prevEscalatedIds = useRef(new Set());
 
   const selected = rooms.find((r) => r.id === selectedId) ?? null;
@@ -50,6 +56,9 @@ function OperatorPage() {
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
     }
+    fetch(`${API_BASE}/settings`)
+      .then((r) => r.json())
+      .then((d) => setSettings(d));
   }, []);
 
   async function loadRooms() {
@@ -133,7 +142,7 @@ function OperatorPage() {
             </div>
           )}
           <div className="hidden md:flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-700">
-            <Icon label="⏱" /> 有人対応時間内 10:00〜19:00
+            <Icon label="⏱" /> 有人対応時間内 {settings.hours_start}〜{settings.hours_end}
           </div>
           <a href="/templates" className="rounded-full bg-slate-900 text-white px-4 py-2 text-sm">
             テンプレート管理
@@ -329,13 +338,19 @@ function OperatorPage() {
                 </button>
               </div>
 
-              <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
-                <div className="font-bold text-red-700 flex items-center gap-2">
-                  <Icon label="☎" /> 時間外・緊急案内
+              {(settings.emergency_phone || settings.emergency_message) && (
+                <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
+                  <div className="font-bold text-red-700 flex items-center gap-2">
+                    <Icon label="☎" /> 時間外・緊急案内
+                  </div>
+                  {settings.emergency_message && (
+                    <p className="text-sm text-red-700 mt-2">{settings.emergency_message}</p>
+                  )}
+                  {settings.emergency_phone && (
+                    <div className="mt-3 text-lg font-bold text-red-800">{settings.emergency_phone}</div>
+                  )}
                 </div>
-                <p className="text-sm text-red-700 mt-2">19:00以降は緊急カテゴリのみ電話番号を表示します。</p>
-                <div className="mt-3 text-lg font-bold text-red-800">092-xxx-xxxx</div>
-              </div>
+              )}
             </div>
           )}
         </aside>
@@ -741,14 +756,14 @@ function GuestPage() {
 // ── テンプレート・カテゴリ管理ページ ──────────────────────────────────────────
 
 function TemplatePage() {
-  const [activeTab, setActiveTab] = useState("properties"); // "properties" | "categories" | "templates"
+  const [activeTab, setActiveTab] = useState("properties");
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900">
       <header className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold">管理ページ</h1>
-          <p className="text-xs text-slate-500">物件・カテゴリ・テンプレートの設定</p>
+          <p className="text-xs text-slate-500">物件・カテゴリ・テンプレート・対応情報の設定</p>
         </div>
         <div className="flex gap-2">
           <a href="/operator" className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm">
@@ -757,11 +772,12 @@ function TemplatePage() {
         </div>
       </header>
 
-      <div className="px-6 pt-4 flex gap-2">
+      <div className="px-6 pt-4 flex gap-2 flex-wrap">
         {[
           { key: "properties", label: "物件管理" },
           { key: "categories", label: "カテゴリ管理" },
           { key: "templates", label: "テンプレート管理" },
+          { key: "settings", label: "対応情報" },
         ].map((tab) => (
           <button
             key={tab.key}
@@ -779,7 +795,101 @@ function TemplatePage() {
         {activeTab === "properties" && <PropertySection />}
         {activeTab === "categories" && <CategorySection />}
         {activeTab === "templates" && <TemplateSection />}
+        {activeTab === "settings" && <SettingsSection />}
       </main>
+    </div>
+  );
+}
+
+function SettingsSection() {
+  const [form, setForm] = useState({
+    hours_start: "",
+    hours_end: "",
+    emergency_phone: "",
+    emergency_message: "",
+  });
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/settings`)
+      .then((r) => r.json())
+      .then((d) => setForm({
+        hours_start: d.hours_start || "",
+        hours_end: d.hours_end || "",
+        emergency_phone: d.emergency_phone || "",
+        emergency_message: d.emergency_message || "",
+      }));
+  }, []);
+
+  async function save() {
+    await Promise.all(
+      Object.entries(form).map(([key, value]) =>
+        fetch(`${API_BASE}/settings/${key}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ value }),
+        })
+      )
+    );
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }
+
+  return (
+    <div className="max-w-xl">
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-6">
+        <h2 className="font-bold text-lg">対応情報の設定</h2>
+
+        <div>
+          <label className="text-sm font-bold">有人対応時間</label>
+          <div className="flex items-center gap-3 mt-1">
+            <input
+              type="time"
+              value={form.hours_start}
+              onChange={(e) => setForm({ ...form, hours_start: e.target.value })}
+              className="rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+            />
+            <span className="text-slate-500 text-sm">〜</span>
+            <input
+              type="time"
+              value={form.hours_end}
+              onChange={(e) => setForm({ ...form, hours_end: e.target.value })}
+              className="rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+            />
+          </div>
+          <p className="text-xs text-slate-400 mt-1">オペレーター画面のヘッダーに表示されます</p>
+        </div>
+
+        <div>
+          <label className="text-sm font-bold">緊急電話番号</label>
+          <input
+            value={form.emergency_phone}
+            onChange={(e) => setForm({ ...form, emergency_phone: e.target.value })}
+            className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+            placeholder="例：092-xxx-xxxx"
+          />
+        </div>
+
+        <div>
+          <label className="text-sm font-bold">時間外メッセージ</label>
+          <textarea
+            value={form.emergency_message}
+            onChange={(e) => setForm({ ...form, emergency_message: e.target.value })}
+            className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none min-h-[80px]"
+            placeholder="例：19:00以降は緊急カテゴリのみ対応いたします。"
+          />
+          <p className="text-xs text-slate-400 mt-1">オペレーター画面の右パネルに表示されます</p>
+        </div>
+
+        <button
+          onClick={save}
+          className={`w-full rounded-xl py-3 font-bold text-sm transition ${
+            saved ? "bg-emerald-600 text-white" : "bg-blue-600 text-white"
+          }`}
+        >
+          {saved ? "保存しました" : "保存"}
+        </button>
+      </div>
     </div>
   );
 }
