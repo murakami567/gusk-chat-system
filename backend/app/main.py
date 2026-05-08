@@ -480,6 +480,34 @@ def get_messages(chat_room_id: int):
 
 # ── オペレーター ───────────────────────────────────────────────────────────────
 
+@app.get("/guest/chat/history")
+def get_guest_history(contact: str, exclude_id: int | None = None):
+    db: Session = SessionLocal()
+    q = db.query(ChatRoom).filter(ChatRoom.guest_contact == contact)
+    if exclude_id:
+        q = q.filter(ChatRoom.id != exclude_id)
+    rooms = q.order_by(ChatRoom.created_at.desc()).limit(10).all()
+    result = []
+    for room in rooms:
+        last_msg = (
+            db.query(Message)
+            .filter(Message.chat_room_id == room.id)
+            .order_by(Message.id.desc())
+            .first()
+        )
+        result.append({
+            "id": room.id,
+            "property_name": room.property_name,
+            "room_number": room.room_number,
+            "category": room.category,
+            "status": room.status,
+            "created_at": room.created_at,
+            "last_message": last_msg.message if last_msg else None,
+        })
+    db.close()
+    return {"history": result}
+
+
 @app.get("/operator/chat-rooms")
 def get_chat_rooms():
     db: Session = SessionLocal()
