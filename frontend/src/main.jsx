@@ -636,7 +636,9 @@ function GuestPage() {
   // ボットフロー状態: "form" | "category" | "templates" | "escalated" | "chat"
   const [botPhase, setBotPhase] = useState("form");
   const [categories, setCategories] = useState([]);
-  const [templateStack, setTemplateStack] = useState([]); // スタック（階層ナビ用）
+  const [templateStack, setTemplateStack] = useState([]);
+  const [pendingEscalationCat, setPendingEscalationCat] = useState(null);
+  const [escalationNote, setEscalationNote] = useState("");
 
   const currentTemplates = templateStack[templateStack.length - 1] || [];
   const messagesEndRef = useRef(null);
@@ -676,6 +678,13 @@ function GuestPage() {
   }
 
   async function selectCategory(cat) {
+    if (cat.is_escalation) {
+      setPendingEscalationCat(cat);
+      setEscalationNote("");
+      setBotPhase("escalation_form");
+      return;
+    }
+
     const res = await fetch(`${API_BASE}/guest/chat/${roomId}/select-category`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -692,6 +701,28 @@ function GuestPage() {
     } else {
       setBotPhase("chat");
     }
+  }
+
+  async function submitEscalationForm() {
+    if (!escalationNote.trim()) { alert("お問い合わせ内容をご記入ください"); return; }
+
+    await fetch(`${API_BASE}/guest/chat/${roomId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sender_type: "guest", message: escalationNote }),
+    });
+
+    const res = await fetch(`${API_BASE}/guest/chat/${roomId}/select-category`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ category_id: pendingEscalationCat.id }),
+    });
+    const data = await res.json();
+    await loadMessages(roomId);
+
+    setPendingEscalationCat(null);
+    setEscalationNote("");
+    setBotPhase(data.escalated ? "escalated" : "chat");
   }
 
   async function selectTemplate(template) {
@@ -913,6 +944,36 @@ function GuestPage() {
                   </button>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* ── エスカレーション前：問い合わせ内容入力 ── */}
+          {botPhase === "escalation_form" && (
+            <div className="rounded-2xl bg-slate-50 border border-slate-200 p-5 space-y-4">
+              <div>
+                <p className="text-sm font-bold text-slate-700">{pendingEscalationCat?.name}</p>
+                <p className="text-xs text-slate-500 mt-1">
+                  担当スタッフに繋ぐ前に、お困りの内容をご記入ください。
+                </p>
+              </div>
+              <textarea
+                value={escalationNote}
+                onChange={(e) => setEscalationNote(e.target.value)}
+                className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none min-h-[100px] resize-none"
+                placeholder="例：カードキーが反応しない。フロントに電話したが繋がらない。"
+              />
+              <button
+                onClick={submitEscalationForm}
+                className="w-full rounded-xl bg-red-600 text-white py-3 font-bold text-sm"
+              >
+                スタッフに連絡する
+              </button>
+              <button
+                onClick={() => { setPendingEscalationCat(null); setBotPhase("category"); }}
+                className="w-full text-xs text-slate-500 underline"
+              >
+                カテゴリに戻る
+              </button>
             </div>
           )}
 
