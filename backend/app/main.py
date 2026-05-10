@@ -1,6 +1,12 @@
+import json
 import os
 import smtplib
+import time
+import urllib.parse
+import urllib.request
 from email.mime.text import MIMEText
+
+import jwt
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -92,6 +98,70 @@ class UpdateRoomInfoRequest(BaseModel):
 
 
 # ── ヘルパー ──────────────────────────────────────────────────────────────────
+
+def _get_lineworks_token() -> str | None:
+    client_id = os.getenv("LINEWORKS_CLIENT_ID")
+    client_secret = os.getenv("LINEWORKS_CLIENT_SECRET")
+    service_account = os.getenv("LINEWORKS_SERVICE_ACCOUNT")
+    private_key = os.getenv("LINEWORKS_PRIVATE_KEY", "").replace("\\n", "\n")
+
+    if not all([client_id, client_secret, service_account, private_key]):
+        return None
+
+    now = int(time.time())
+    jwt_token = jwt.encode(
+        {"iss": client_id, "sub": service_account, "iat": now, "exp": now + 3600},
+        private_key,
+        algorithm="RS256",
+    )
+
+    body = urllib.parse.urlencode({
+        "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        "assertion": jwt_token,
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "scope": "bot",
+    }).encode()
+
+    req = urllib.request.Request(
+        "https://auth.worksmobile.com/oauth2/v2.0/token",
+        data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read()).get("access_token")
+    except Exception:
+        return None
+
+
+def _send_lineworks_notification(text: str):
+    bot_id = os.getenv("LINEWORKS_BOT_ID")
+    channel_id = os.getenv("LINEWORKS_CHANNEL_ID")
+
+    if not all([bot_id, channel_id]):
+        return
+
+    try:
+        token = _get_lineworks_token()
+        if not token:
+            return
+
+        body = json.dumps({"content": {"type": "text", "text": text}}).encode()
+        req = urllib.request.Request(
+            f"https://www.worksapis.com/v1.0/bots/{bot_id}/channels/{channel_id}/messages",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        urllib.request.urlopen(req)
+    except Exception:
+        pass
+
 
 def _send_escalation_email(
     room_id: int,
@@ -378,6 +448,15 @@ def select_category(
             category_name,
             guest_contact,
         )
+        lw_text = (
+            f"【緊急対応が必要です】\n"
+            f"物件：{property_name}\n"
+            f"部屋：{room_number}号室\n"
+            f"カテゴリ：{category_name}\n"
+            f"連絡先：{guest_contact or '未登録'}\n"
+            f"チャットID：{chat_room_id}"
+        )
+        background_tasks.add_task(_send_lineworks_notification, lw_text)
 
         return {"escalated": True, "templates": []}
 
