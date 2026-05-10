@@ -15,13 +15,18 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .database import Base, SessionLocal, engine
-from passlib.context import CryptContext
+import bcrypt as _bcrypt
 
 from .models import Category, ChatRoom, Message, MessageTemplate, Operator, Property, Setting
 
 Base.metadata.create_all(bind=engine)
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+def _hash_password(password: str) -> str:
+    return _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
+
+def _verify_password(password: str, hashed: str) -> bool:
+    return _bcrypt.checkpw(password.encode(), hashed.encode())
+
 SECRET_KEY = os.getenv("SECRET_KEY", "changeme-set-SECRET_KEY-in-production")
 
 # 既存テーブルへの列追加をカバーする起動時マイグレーション
@@ -44,7 +49,7 @@ def _run_migrations():
         with engine.connect() as conn2:
             count = conn2.execute(text("SELECT COUNT(*) FROM operators")).scalar()
             if count == 0:
-                hashed = pwd_context.hash(admin_pass)
+                hashed = _hash_password(admin_pass)
                 conn2.execute(
                     text("INSERT INTO operators (username, display_name, password_hash, is_admin) "
                          "VALUES (:u, :d, :h, TRUE)"),
@@ -289,7 +294,7 @@ def login(data: LoginRequest):
         Operator.is_active == True,
     ).first()
     db.close()
-    if not op or not pwd_context.verify(data.password, op.password_hash):
+    if not op or not _verify_password(data.password, op.password_hash):
         raise HTTPException(status_code=401, detail="ユーザー名またはパスワードが正しくありません")
     token = jwt.encode(
         {
@@ -348,7 +353,7 @@ def create_operator(data: OperatorCreateRequest, op: dict = Depends(require_admi
     new_op = Operator(
         username=data.username,
         display_name=data.display_name,
-        password_hash=pwd_context.hash(data.password),
+        password_hash=_hash_password(data.password),
         is_admin=data.is_admin,
     )
     db.add(new_op)
@@ -370,7 +375,7 @@ def update_operator(operator_id: int, data: OperatorUpdateRequest, op: dict = De
     target.is_admin = data.is_admin
     target.is_active = data.is_active
     if data.password:
-        target.password_hash = pwd_context.hash(data.password)
+        target.password_hash = _hash_password(data.password)
     db.commit()
     db.close()
     return {"status": "ok"}
