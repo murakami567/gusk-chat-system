@@ -238,6 +238,7 @@ function OperatorPage() {
   }
 
   useEffect(() => {
+    if (!getAuth().token) return;
     loadRooms();
     const timer = setInterval(loadRooms, 5000);
     return () => clearInterval(timer);
