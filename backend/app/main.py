@@ -54,8 +54,8 @@ def _run_migrations():
             if exists == 0:
                 hashed = _hash_password(admin_pass)
                 conn2.execute(
-                    text("INSERT INTO operators (username, display_name, password_hash, is_admin) "
-                         "VALUES (:u, :d, :h, TRUE)"),
+                    text("INSERT INTO operators (username, display_name, password_hash, is_admin, is_active) "
+                         "VALUES (:u, :d, :h, TRUE, TRUE)"),
                     {"u": admin_user, "d": "管理者", "h": hashed},
                 )
                 conn2.commit()
@@ -320,7 +320,7 @@ def login(data: LoginRequest):
     db: Session = SessionLocal()
     op = db.query(Operator).filter(
         Operator.username == data.username,
-        Operator.is_active == True,
+        Operator.is_active != False,
     ).first()
     db.close()
     if not op or not _verify_password(data.password, op.password_hash):
