@@ -42,13 +42,16 @@ def _run_migrations():
         """))
         conn.commit()
 
-    # 管理者アカウントが未登録なら初期アカウントを作成
+    # ADMIN_USERNAME が存在しない場合のみ初期管理者を作成
     admin_user = os.getenv("ADMIN_USERNAME", "admin")
     admin_pass = os.getenv("ADMIN_PASSWORD")
     if admin_pass:
         with engine.connect() as conn2:
-            count = conn2.execute(text("SELECT COUNT(*) FROM operators")).scalar()
-            if count == 0:
+            exists = conn2.execute(
+                text("SELECT COUNT(*) FROM operators WHERE username = :u"),
+                {"u": admin_user},
+            ).scalar()
+            if exists == 0:
                 hashed = _hash_password(admin_pass)
                 conn2.execute(
                     text("INSERT INTO operators (username, display_name, password_hash, is_admin) "
