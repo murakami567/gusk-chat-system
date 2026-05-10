@@ -55,6 +55,18 @@ class Message(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class Operator(Base):
+    __tablename__ = "operators"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, nullable=False, unique=True)
+    display_name = Column(String, nullable=False)
+    password_hash = Column(String, nullable=False)
+    is_admin = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class MessageTemplate(Base):
     __tablename__ = "message_templates"
 

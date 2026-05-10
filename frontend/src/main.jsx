@@ -23,6 +23,33 @@ function compressImage(file, maxWidth = 1200, quality = 0.75) {
   });
 }
 
+function getAuth() {
+  try {
+    return {
+      token: localStorage.getItem("op_token"),
+      operator: JSON.parse(localStorage.getItem("op_info") || "null"),
+    };
+  } catch {
+    return { token: null, operator: null };
+  }
+}
+function setAuth(token, operator) {
+  localStorage.setItem("op_token", token);
+  localStorage.setItem("op_info", JSON.stringify(operator));
+}
+function clearAuth() {
+  localStorage.removeItem("op_token");
+  localStorage.removeItem("op_info");
+}
+async function authFetch(url, options = {}) {
+  const { token } = getAuth();
+  const headers = { ...options.headers };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(url, { ...options, headers });
+  if (res.status === 401) { clearAuth(); window.location.href = "/login"; }
+  return res;
+}
+
 function ChatImage({ src, className = "" }) {
   return (
     <img
@@ -76,6 +103,7 @@ function OperatorPage() {
     emergency_phone: "",
     emergency_message: "",
   });
+  const [currentOperator, setCurrentOperator] = useState(null);
   const [allCategories, setAllCategories] = useState([]);
   const [infoEditing, setInfoEditing] = useState(false);
   const [infoForm, setInfoForm] = useState({ guest_contact: "", category: "", assigned_operator: "", checkin_date: "" });
@@ -91,15 +119,14 @@ function OperatorPage() {
   const escalatedCount = useMemo(() => rooms.filter((r) => r.mode === "operator").length, [rooms]);
 
   useEffect(() => {
+    const { token, operator } = getAuth();
+    if (!token) { window.location.href = "/login"; return; }
+    setCurrentOperator(operator);
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
     }
-    fetch(`${API_BASE}/settings`)
-      .then((r) => r.json())
-      .then((d) => setSettings(d));
-    fetch(`${API_BASE}/categories`)
-      .then((r) => r.json())
-      .then((d) => setAllCategories(d.categories || []));
+    fetch(`${API_BASE}/settings`).then((r) => r.json()).then((d) => setSettings(d));
+    fetch(`${API_BASE}/categories`).then((r) => r.json()).then((d) => setAllCategories(d.categories || []));
   }, []);
 
   useEffect(() => {
@@ -117,7 +144,7 @@ function OperatorPage() {
   }, [selectedId]);
 
   async function loadRooms() {
-    const res = await fetch(`${API_BASE}/operator/chat-rooms`);
+    const res = await authFetch(`${API_BASE}/operator/chat-rooms`);
     const data = await res.json();
     const list = data.chat_rooms || [];
 
@@ -166,7 +193,7 @@ function OperatorPage() {
 
   async function updateStatus(status) {
     if (!selected) return;
-    await fetch(`${API_BASE}/operator/chat-rooms/${selected.id}/status?status=${status}`, {
+    await authFetch(`${API_BASE}/operator/chat-rooms/${selected.id}/status?status=${status}`, {
       method: "PATCH",
     });
     await loadRooms();
@@ -201,7 +228,7 @@ function OperatorPage() {
 
   async function saveRoomInfo() {
     if (!selected) return;
-    await fetch(`${API_BASE}/operator/chat-rooms/${selected.id}/info`, {
+    await authFetch(`${API_BASE}/operator/chat-rooms/${selected.id}/info`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(infoForm),
@@ -240,6 +267,15 @@ function OperatorPage() {
           <a href="/templates" className="rounded-full bg-slate-900 text-white px-4 py-2 text-sm">
             テンプレート管理
           </a>
+          <div className="flex items-center gap-3 border-l border-slate-200 pl-3">
+            <span className="text-sm text-slate-600">{currentOperator?.display_name}</span>
+            <button
+              onClick={() => { clearAuth(); window.location.href = "/login"; }}
+              className="text-xs text-slate-500 underline"
+            >
+              ログアウト
+            </button>
+          </div>
         </div>
       </header>
 
@@ -1104,6 +1140,19 @@ function GuestPage() {
 
 function TemplatePage() {
   const [activeTab, setActiveTab] = useState("properties");
+  const { operator: currentOp } = getAuth();
+
+  useEffect(() => {
+    if (!getAuth().token) { window.location.href = "/login"; }
+  }, []);
+
+  const tabs = [
+    { key: "properties", label: "物件管理" },
+    { key: "categories", label: "カテゴリ管理" },
+    { key: "templates", label: "テンプレート管理" },
+    { key: "settings", label: "対応情報" },
+    ...(currentOp?.is_admin ? [{ key: "operators", label: "オペレーター管理" }] : []),
+  ];
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900">
@@ -1112,20 +1161,24 @@ function TemplatePage() {
           <h1 className="text-xl font-bold">管理ページ</h1>
           <p className="text-xs text-slate-500">物件・カテゴリ・テンプレート・対応情報の設定</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-3">
           <a href="/operator" className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm">
             チャット管理へ
           </a>
+          <div className="flex items-center gap-3 border-l border-slate-200 pl-3">
+            <span className="text-sm text-slate-600">{currentOp?.display_name}</span>
+            <button
+              onClick={() => { clearAuth(); window.location.href = "/login"; }}
+              className="text-xs text-slate-500 underline"
+            >
+              ログアウト
+            </button>
+          </div>
         </div>
       </header>
 
       <div className="px-6 pt-4 flex gap-2 flex-wrap">
-        {[
-          { key: "properties", label: "物件管理" },
-          { key: "categories", label: "カテゴリ管理" },
-          { key: "templates", label: "テンプレート管理" },
-          { key: "settings", label: "対応情報" },
-        ].map((tab) => (
+        {tabs.map((tab) => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
@@ -1143,6 +1196,7 @@ function TemplatePage() {
         {activeTab === "categories" && <CategorySection />}
         {activeTab === "templates" && <TemplateSection />}
         {activeTab === "settings" && <SettingsSection />}
+        {activeTab === "operators" && currentOp?.is_admin && <OperatorsSection />}
       </main>
     </div>
   );
@@ -1171,7 +1225,7 @@ function SettingsSection() {
   async function save() {
     await Promise.all(
       Object.entries(form).map(([key, value]) =>
-        fetch(`${API_BASE}/settings/${key}`, {
+        authFetch(`${API_BASE}/settings/${key}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ value }),
@@ -1253,19 +1307,19 @@ function PropertySection() {
 
   async function add() {
     if (!name.trim()) { alert("物件名を入力してください"); return; }
-    const res = await fetch(`${API_BASE}/properties`, {
+    const res = await authFetch(`${API_BASE}/properties`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
     });
-    if (!res.ok) { alert("同じ物件名がすでに登録されています"); return; }
+    if (!res?.ok) { alert("同じ物件名がすでに登録されています"); return; }
     setName("");
     load();
   }
 
   async function remove(id) {
     if (!confirm("この物件を削除しますか？")) return;
-    await fetch(`${API_BASE}/properties/${id}`, { method: "DELETE" });
+    await authFetch(`${API_BASE}/properties/${id}`, { method: "DELETE" });
     load();
   }
 
@@ -1340,14 +1394,14 @@ function CategorySection() {
     const body = { name: form.name, property_name: form.property_name || null, is_escalation: form.is_escalation };
 
     if (editing) {
-      await fetch(`${API_BASE}/categories/${editing}`, {
+      await authFetch(`${API_BASE}/categories/${editing}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
       setEditing(null);
     } else {
-      await fetch(`${API_BASE}/categories`, {
+      await authFetch(`${API_BASE}/categories`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -1359,7 +1413,7 @@ function CategorySection() {
 
   async function remove(id) {
     if (!confirm("このカテゴリを削除しますか？")) return;
-    await fetch(`${API_BASE}/categories/${id}`, { method: "DELETE" });
+    await authFetch(`${API_BASE}/categories/${id}`, { method: "DELETE" });
     load();
   }
 
@@ -1489,7 +1543,7 @@ function TemplateSection() {
   });
 
   async function loadTemplates() {
-    const res = await fetch(`${API_BASE}/operator/templates`);
+    const res = await authFetch(`${API_BASE}/operator/templates`);
     const data = await res.json();
     setTemplates(data.templates || []);
   }
@@ -1507,7 +1561,7 @@ function TemplateSection() {
 
   async function loadRootTemplates(propertyName, category) {
     if (!propertyName || !category) { setRootTemplates([]); return; }
-    const res = await fetch(
+    const res = await authFetch(
       `${API_BASE}/operator/templates?property_name=${encodeURIComponent(propertyName)}&category=${encodeURIComponent(category)}&root_only=true`
     );
     const data = await res.json();
@@ -1520,7 +1574,7 @@ function TemplateSection() {
     if (!form.title.trim()) { alert("タイトルを入力してください"); return; }
     if (!form.body.trim()) { alert("本文を入力してください"); return; }
 
-    await fetch(`${API_BASE}/operator/templates`, {
+    await authFetch(`${API_BASE}/operator/templates`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(form),
@@ -1532,7 +1586,7 @@ function TemplateSection() {
 
   async function deleteTemplate(id) {
     if (!confirm("このテンプレートを削除しますか？")) return;
-    await fetch(`${API_BASE}/operator/templates/${id}`, { method: "DELETE" });
+    await authFetch(`${API_BASE}/operator/templates/${id}`, { method: "DELETE" });
     loadTemplates();
   }
 
@@ -1690,9 +1744,239 @@ function TemplateSection() {
   );
 }
 
+function OperatorsSection() {
+  const [operators, setOperators] = useState([]);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({ username: "", display_name: "", password: "", is_admin: false, is_active: true });
+
+  async function load() {
+    const res = await authFetch(`${API_BASE}/admin/operators`);
+    if (!res) return;
+    const data = await res.json();
+    setOperators(data.operators || []);
+  }
+
+  async function save() {
+    if (!form.display_name.trim()) { alert("表示名を入力してください"); return; }
+    if (editing) {
+      await authFetch(`${API_BASE}/admin/operators/${editing}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ display_name: form.display_name, password: form.password || null, is_admin: form.is_admin, is_active: form.is_active }),
+      });
+      setEditing(null);
+    } else {
+      if (!form.username.trim()) { alert("ユーザー名を入力してください"); return; }
+      if (!form.password.trim()) { alert("パスワードを入力してください"); return; }
+      const res = await authFetch(`${API_BASE}/admin/operators`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: form.username, display_name: form.display_name, password: form.password, is_admin: form.is_admin }),
+      });
+      if (!res?.ok) { alert("ユーザー名がすでに使用されています"); return; }
+    }
+    setForm({ username: "", display_name: "", password: "", is_admin: false, is_active: true });
+    load();
+  }
+
+  async function remove(id) {
+    if (!confirm("このオペレーターを削除しますか？")) return;
+    await authFetch(`${API_BASE}/admin/operators/${id}`, { method: "DELETE" });
+    load();
+  }
+
+  function startEdit(op) {
+    setEditing(op.id);
+    setForm({ username: op.username, display_name: op.display_name, password: "", is_admin: op.is_admin, is_active: op.is_active });
+  }
+
+  useEffect(() => { load(); }, []);
+
+  return (
+    <div className="grid grid-cols-12 gap-4">
+      <section className="col-span-12 lg:col-span-4 bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+        <h2 className="font-bold text-lg mb-4">{editing ? "オペレーターを編集" : "新規オペレーター追加"}</h2>
+        <div className="space-y-4">
+          {!editing ? (
+            <div>
+              <label className="text-sm font-bold">ユーザー名 <span className="text-red-500">*</span></label>
+              <input
+                value={form.username}
+                onChange={(e) => setForm({ ...form, username: e.target.value })}
+                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+                placeholder="例：tanaka"
+                autoComplete="off"
+              />
+            </div>
+          ) : (
+            <div className="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-sm">
+              <span className="text-slate-500">ユーザー名：</span>
+              <span className="font-medium">{form.username}</span>
+            </div>
+          )}
+          <div>
+            <label className="text-sm font-bold">表示名 <span className="text-red-500">*</span></label>
+            <input
+              value={form.display_name}
+              onChange={(e) => setForm({ ...form, display_name: e.target.value })}
+              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+              placeholder="例：田中 太郎"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-bold">
+              パスワード
+              {editing
+                ? <span className="text-xs font-normal text-slate-400 ml-1">（空欄で変更なし）</span>
+                : <span className="text-red-500"> *</span>}
+            </label>
+            <input
+              type="password"
+              value={form.password}
+              onChange={(e) => setForm({ ...form, password: e.target.value })}
+              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+              placeholder={editing ? "変更する場合のみ入力" : "パスワードを入力"}
+              autoComplete="new-password"
+            />
+          </div>
+          <div className="flex gap-4">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={form.is_admin} onChange={(e) => setForm({ ...form, is_admin: e.target.checked })} className="w-4 h-4" />
+              <span className="text-sm">管理者権限</span>
+            </label>
+            {editing && (
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} className="w-4 h-4" />
+                <span className="text-sm">有効</span>
+              </label>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <button onClick={save} className="flex-1 rounded-xl bg-blue-600 text-white py-3 font-bold text-sm">
+              {editing ? "更新" : "追加"}
+            </button>
+            {editing && (
+              <button
+                onClick={() => { setEditing(null); setForm({ username: "", display_name: "", password: "", is_admin: false, is_active: true }); }}
+                className="rounded-xl border border-slate-300 px-4 py-3 text-sm"
+              >
+                キャンセル
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="col-span-12 lg:col-span-8 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="p-5 border-b border-slate-200">
+          <h2 className="font-bold text-lg">オペレーター一覧</h2>
+        </div>
+        <div className="divide-y divide-slate-200">
+          {operators.length === 0 && <div className="p-6 text-sm text-slate-500">オペレーターが登録されていません。</div>}
+          {operators.map((op) => (
+            <div key={op.id} className="px-5 py-4 flex items-center justify-between gap-4">
+              <div>
+                <div className="font-medium flex items-center gap-2">
+                  {op.display_name}
+                  {op.is_admin && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 border border-blue-200">管理者</span>}
+                  {!op.is_active && <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200">無効</span>}
+                </div>
+                <div className="text-xs text-slate-500 mt-0.5">@{op.username}</div>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <button onClick={() => startEdit(op)} className="rounded-xl border border-slate-200 px-3 py-2 text-sm">編集</button>
+                <button onClick={() => remove(op.id)} className="rounded-xl border border-red-200 text-red-600 px-3 py-2 text-sm">削除</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function LoginPage() {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (getAuth().token) window.location.href = "/operator";
+  }, []);
+
+  async function login() {
+    if (!username || !password) { setError("ユーザー名とパスワードを入力してください"); return; }
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        setError(d.detail || "ログインに失敗しました");
+        return;
+      }
+      const d = await res.json();
+      setAuth(d.token, d.operator);
+      window.location.href = "/operator";
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-100 flex items-center justify-center">
+      <div className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-slate-200 p-8 space-y-6">
+        <div>
+          <h1 className="text-xl font-bold">オペレーターログイン</h1>
+          <p className="text-xs text-slate-500 mt-1">ゲストチャット管理システム</p>
+        </div>
+        <div className="space-y-4">
+          <div>
+            <label className="text-sm font-bold">ユーザー名</label>
+            <input
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && login()}
+              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+              placeholder="username"
+              autoComplete="username"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-bold">パスワード</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && login()}
+              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+              placeholder="password"
+              autoComplete="current-password"
+            />
+          </div>
+          {error && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-4 py-3">{error}</p>}
+          <button
+            onClick={login}
+            disabled={loading}
+            className="w-full rounded-xl bg-slate-900 text-white py-3 font-bold text-sm disabled:opacity-50"
+          >
+            {loading ? "ログイン中..." : "ログイン"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── ルーティング ───────────────────────────────────────────────────────────────
 
 function App() {
+  if (window.location.pathname.startsWith("/login")) return <LoginPage />;
   if (window.location.pathname.startsWith("/templates")) return <TemplatePage />;
   if (window.location.pathname.startsWith("/operator")) return <OperatorPage />;
   return <GuestPage />;

@@ -8,16 +8,21 @@ from email.mime.text import MIMEText
 
 import jwt
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .database import Base, SessionLocal, engine
-from .models import Category, ChatRoom, Message, MessageTemplate, Property, Setting
+from passlib.context import CryptContext
+
+from .models import Category, ChatRoom, Message, MessageTemplate, Operator, Property, Setting
 
 Base.metadata.create_all(bind=engine)
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+SECRET_KEY = os.getenv("SECRET_KEY", "changeme-set-SECRET_KEY-in-production")
 
 # 既存テーブルへの列追加をカバーする起動時マイグレーション
 def _run_migrations():
@@ -31,6 +36,21 @@ def _run_migrations():
             ADD COLUMN IF NOT EXISTS checkin_date VARCHAR
         """))
         conn.commit()
+
+    # 管理者アカウントが未登録なら初期アカウントを作成
+    admin_user = os.getenv("ADMIN_USERNAME", "admin")
+    admin_pass = os.getenv("ADMIN_PASSWORD")
+    if admin_pass:
+        with engine.connect() as conn2:
+            count = conn2.execute(text("SELECT COUNT(*) FROM operators")).scalar()
+            if count == 0:
+                hashed = pwd_context.hash(admin_pass)
+                conn2.execute(
+                    text("INSERT INTO operators (username, display_name, password_hash, is_admin) "
+                         "VALUES (:u, :d, :h, TRUE)"),
+                    {"u": admin_user, "d": "管理者", "h": hashed},
+                )
+                conn2.commit()
 
 _run_migrations()
 
@@ -95,6 +115,25 @@ class UpdateRoomInfoRequest(BaseModel):
     category: str | None = None
     assigned_operator: str | None = None
     checkin_date: str | None = None
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class OperatorCreateRequest(BaseModel):
+    username: str
+    display_name: str
+    password: str
+    is_admin: bool = False
+
+
+class OperatorUpdateRequest(BaseModel):
+    display_name: str
+    password: str | None = None
+    is_admin: bool = False
+    is_active: bool = True
 
 
 # ── ヘルパー ──────────────────────────────────────────────────────────────────
@@ -202,6 +241,23 @@ def _send_escalation_email(
         pass
 
 
+def require_auth(authorization: str = Header(None)) -> dict:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        return jwt.decode(authorization[7:], SECRET_KEY, algorithms=["HS256"])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+def require_admin(op: dict = Depends(require_auth)) -> dict:
+    if not op.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin required")
+    return op
+
+
 def _template_dict(t: MessageTemplate) -> dict:
     return {
         "id": t.id,
@@ -223,6 +279,118 @@ def health():
     return {"status": "healthy"}
 
 
+# ── 認証 ──────────────────────────────────────────────────────────────────────
+
+@app.post("/auth/login")
+def login(data: LoginRequest):
+    db: Session = SessionLocal()
+    op = db.query(Operator).filter(
+        Operator.username == data.username,
+        Operator.is_active == True,
+    ).first()
+    db.close()
+    if not op or not pwd_context.verify(data.password, op.password_hash):
+        raise HTTPException(status_code=401, detail="ユーザー名またはパスワードが正しくありません")
+    token = jwt.encode(
+        {
+            "sub": str(op.id),
+            "username": op.username,
+            "display_name": op.display_name,
+            "is_admin": op.is_admin,
+            "exp": int(time.time()) + 86400 * 7,
+        },
+        SECRET_KEY,
+        algorithm="HS256",
+    )
+    return {
+        "token": token,
+        "operator": {
+            "id": op.id,
+            "username": op.username,
+            "display_name": op.display_name,
+            "is_admin": op.is_admin,
+        },
+    }
+
+
+@app.get("/auth/me")
+def get_me(op: dict = Depends(require_auth)):
+    return op
+
+
+# ── オペレーターアカウント管理（管理者のみ） ──────────────────────────────────
+
+@app.get("/admin/operators")
+def list_operators(op: dict = Depends(require_admin)):
+    db: Session = SessionLocal()
+    ops = db.query(Operator).order_by(Operator.id.asc()).all()
+    result = [
+        {
+            "id": o.id,
+            "username": o.username,
+            "display_name": o.display_name,
+            "is_admin": o.is_admin,
+            "is_active": o.is_active,
+            "created_at": o.created_at,
+        }
+        for o in ops
+    ]
+    db.close()
+    return {"operators": result}
+
+
+@app.post("/admin/operators")
+def create_operator(data: OperatorCreateRequest, op: dict = Depends(require_admin)):
+    db: Session = SessionLocal()
+    if db.query(Operator).filter(Operator.username == data.username).first():
+        db.close()
+        raise HTTPException(status_code=400, detail="username already exists")
+    new_op = Operator(
+        username=data.username,
+        display_name=data.display_name,
+        password_hash=pwd_context.hash(data.password),
+        is_admin=data.is_admin,
+    )
+    db.add(new_op)
+    db.commit()
+    db.refresh(new_op)
+    new_id = new_op.id
+    db.close()
+    return {"status": "ok", "operator_id": new_id}
+
+
+@app.patch("/admin/operators/{operator_id}")
+def update_operator(operator_id: int, data: OperatorUpdateRequest, op: dict = Depends(require_admin)):
+    db: Session = SessionLocal()
+    target = db.query(Operator).filter(Operator.id == operator_id).first()
+    if not target:
+        db.close()
+        raise HTTPException(status_code=404, detail="operator not found")
+    target.display_name = data.display_name
+    target.is_admin = data.is_admin
+    target.is_active = data.is_active
+    if data.password:
+        target.password_hash = pwd_context.hash(data.password)
+    db.commit()
+    db.close()
+    return {"status": "ok"}
+
+
+@app.delete("/admin/operators/{operator_id}")
+def delete_operator(operator_id: int, op: dict = Depends(require_admin)):
+    if str(operator_id) == op.get("sub"):
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    db: Session = SessionLocal()
+    target = db.query(Operator).filter(Operator.id == operator_id).first()
+    if not target:
+        db.close()
+        raise HTTPException(status_code=404, detail="operator not found")
+    db.delete(target)
+    db.commit()
+    db.close()
+    return {"status": "ok"}
+
+
 # ── 物件管理 ──────────────────────────────────────────────────────────────────
 
 @app.get("/properties")
@@ -235,7 +403,7 @@ def get_properties():
 
 
 @app.post("/properties")
-def create_property(data: PropertyRequest):
+def create_property(data: PropertyRequest, op: dict = Depends(require_auth)):
     db: Session = SessionLocal()
     existing = db.query(Property).filter(Property.name == data.name).first()
     if existing:
@@ -251,7 +419,7 @@ def create_property(data: PropertyRequest):
 
 
 @app.delete("/properties/{property_id}")
-def delete_property(property_id: int):
+def delete_property(property_id: int, op: dict = Depends(require_auth)):
     db: Session = SessionLocal()
     prop = db.query(Property).filter(Property.id == property_id).first()
     if not prop:
@@ -285,7 +453,7 @@ def get_settings():
 
 
 @app.put("/settings/{key}")
-def upsert_setting(key: str, data: SettingRequest):
+def upsert_setting(key: str, data: SettingRequest, op: dict = Depends(require_auth)):
     if key not in SETTING_DEFAULTS:
         raise HTTPException(status_code=400, detail="unknown setting key")
     db: Session = SessionLocal()
@@ -325,7 +493,7 @@ def get_categories(property_name: str | None = None):
 
 
 @app.post("/categories")
-def create_category(data: CategoryRequest):
+def create_category(data: CategoryRequest, op: dict = Depends(require_auth)):
     db: Session = SessionLocal()
     cat = Category(
         name=data.name,
@@ -341,7 +509,7 @@ def create_category(data: CategoryRequest):
 
 
 @app.put("/categories/{category_id}")
-def update_category(category_id: int, data: CategoryRequest):
+def update_category(category_id: int, data: CategoryRequest, op: dict = Depends(require_auth)):
     db: Session = SessionLocal()
     cat = db.query(Category).filter(Category.id == category_id).first()
     if not cat:
@@ -356,7 +524,7 @@ def update_category(category_id: int, data: CategoryRequest):
 
 
 @app.delete("/categories/{category_id}")
-def delete_category(category_id: int):
+def delete_category(category_id: int, op: dict = Depends(require_auth)):
     db: Session = SessionLocal()
     cat = db.query(Category).filter(Category.id == category_id).first()
     if not cat:
@@ -588,7 +756,7 @@ def get_guest_history(contact: str, exclude_id: int | None = None):
 
 
 @app.get("/operator/chat-rooms")
-def get_chat_rooms():
+def get_chat_rooms(op: dict = Depends(require_auth)):
     db: Session = SessionLocal()
     rooms = db.query(ChatRoom).order_by(ChatRoom.id.desc()).all()
     result = [
@@ -610,7 +778,7 @@ def get_chat_rooms():
 
 
 @app.patch("/operator/chat-rooms/{chat_room_id}/info")
-def update_room_info(chat_room_id: int, data: UpdateRoomInfoRequest):
+def update_room_info(chat_room_id: int, data: UpdateRoomInfoRequest, op: dict = Depends(require_auth)):
     db: Session = SessionLocal()
     room = db.query(ChatRoom).filter(ChatRoom.id == chat_room_id).first()
     if not room:
@@ -626,7 +794,7 @@ def update_room_info(chat_room_id: int, data: UpdateRoomInfoRequest):
 
 
 @app.patch("/operator/chat-rooms/{chat_room_id}/status")
-def update_status(chat_room_id: int, status: str):
+def update_status(chat_room_id: int, status: str, op: dict = Depends(require_auth)):
     db: Session = SessionLocal()
     room = db.query(ChatRoom).filter(ChatRoom.id == chat_room_id).first()
     if not room:
@@ -644,6 +812,7 @@ def get_templates(
     category: str | None = None,
     parent_id: int | None = None,
     root_only: bool = False,
+    op: dict = Depends(require_auth),
 ):
     db: Session = SessionLocal()
     q = db.query(MessageTemplate)
@@ -662,7 +831,7 @@ def get_templates(
 
 
 @app.post("/operator/templates")
-def create_template(data: TemplateRequest):
+def create_template(data: TemplateRequest, op: dict = Depends(require_auth)):
     db: Session = SessionLocal()
     template = MessageTemplate(
         property_name=data.property_name,
@@ -682,7 +851,7 @@ def create_template(data: TemplateRequest):
 
 
 @app.patch("/operator/templates/{template_id}")
-def update_template(template_id: int, data: TemplateRequest):
+def update_template(template_id: int, data: TemplateRequest, op: dict = Depends(require_auth)):
     db: Session = SessionLocal()
     template = db.query(MessageTemplate).filter(MessageTemplate.id == template_id).first()
     if not template:
@@ -701,7 +870,7 @@ def update_template(template_id: int, data: TemplateRequest):
 
 
 @app.delete("/operator/templates/{template_id}")
-def delete_template(template_id: int):
+def delete_template(template_id: int, op: dict = Depends(require_auth)):
     db: Session = SessionLocal()
     template = db.query(MessageTemplate).filter(MessageTemplate.id == template_id).first()
     if not template:
