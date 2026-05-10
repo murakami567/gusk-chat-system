@@ -1899,11 +1899,16 @@ function OperatorsSection() {
 function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [needsSetup, setNeedsSetup] = useState(null); // null=確認中
 
   useEffect(() => {
-    if (getAuth().token) window.location.href = "/operator";
+    if (getAuth().token) { window.location.href = "/operator"; return; }
+    fetch(`${API_BASE}/setup/status`)
+      .then((r) => r.json())
+      .then((d) => setNeedsSetup(d.needs_setup));
   }, []);
 
   async function login() {
@@ -1929,46 +1934,97 @@ function LoginPage() {
     }
   }
 
+  async function setup() {
+    if (!username || !password || !displayName) { setError("すべての項目を入力してください"); return; }
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch(`${API_BASE}/setup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, display_name: displayName, password, is_admin: true }),
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        setError(d.detail || "初期設定に失敗しました");
+        return;
+      }
+      setNeedsSetup(false);
+      setError("");
+      alert("管理者アカウントを作成しました。ログインしてください。");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (needsSetup === null) {
+    return <div className="min-h-screen bg-slate-100 flex items-center justify-center"><p className="text-slate-500">読み込み中...</p></div>;
+  }
+
   return (
     <div className="min-h-screen bg-slate-100 flex items-center justify-center">
       <div className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-slate-200 p-8 space-y-6">
-        <div>
-          <h1 className="text-xl font-bold">オペレーターログイン</h1>
-          <p className="text-xs text-slate-500 mt-1">ゲストチャット管理システム</p>
-        </div>
-        <div className="space-y-4">
-          <div>
-            <label className="text-sm font-bold">ユーザー名</label>
-            <input
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && login()}
-              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
-              placeholder="username"
-              autoComplete="username"
-            />
-          </div>
-          <div>
-            <label className="text-sm font-bold">パスワード</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && login()}
-              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
-              placeholder="password"
-              autoComplete="current-password"
-            />
-          </div>
-          {error && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-4 py-3">{error}</p>}
-          <button
-            onClick={login}
-            disabled={loading}
-            className="w-full rounded-xl bg-slate-900 text-white py-3 font-bold text-sm disabled:opacity-50"
-          >
-            {loading ? "ログイン中..." : "ログイン"}
-          </button>
-        </div>
+        {needsSetup ? (
+          <>
+            <div>
+              <h1 className="text-xl font-bold">初期設定</h1>
+              <p className="text-xs text-slate-500 mt-1">最初の管理者アカウントを作成してください</p>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-bold">ユーザー名 <span className="text-red-500">*</span></label>
+                <input value={username} onChange={(e) => setUsername(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+                  placeholder="例：admin" autoComplete="off" />
+              </div>
+              <div>
+                <label className="text-sm font-bold">表示名 <span className="text-red-500">*</span></label>
+                <input value={displayName} onChange={(e) => setDisplayName(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+                  placeholder="例：管理者" />
+              </div>
+              <div>
+                <label className="text-sm font-bold">パスワード <span className="text-red-500">*</span></label>
+                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+                  placeholder="パスワードを設定" autoComplete="new-password" />
+              </div>
+              {error && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-4 py-3">{error}</p>}
+              <button onClick={setup} disabled={loading}
+                className="w-full rounded-xl bg-blue-600 text-white py-3 font-bold text-sm disabled:opacity-50">
+                {loading ? "作成中..." : "管理者アカウントを作成"}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div>
+              <h1 className="text-xl font-bold">オペレーターログイン</h1>
+              <p className="text-xs text-slate-500 mt-1">ゲストチャット管理システム</p>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-bold">ユーザー名</label>
+                <input value={username} onChange={(e) => setUsername(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && login()}
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+                  placeholder="username" autoComplete="username" />
+              </div>
+              <div>
+                <label className="text-sm font-bold">パスワード</label>
+                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && login()}
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+                  placeholder="password" autoComplete="current-password" />
+              </div>
+              {error && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-4 py-3">{error}</p>}
+              <button onClick={login} disabled={loading}
+                className="w-full rounded-xl bg-slate-900 text-white py-3 font-bold text-sm disabled:opacity-50">
+                {loading ? "ログイン中..." : "ログイン"}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

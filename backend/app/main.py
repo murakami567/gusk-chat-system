@@ -289,6 +289,32 @@ def health():
 
 # ── 認証 ──────────────────────────────────────────────────────────────────────
 
+@app.get("/setup/status")
+def setup_status():
+    db: Session = SessionLocal()
+    count = db.query(Operator).count()
+    db.close()
+    return {"needs_setup": count == 0}
+
+
+@app.post("/setup")
+def setup_first_admin(data: OperatorCreateRequest):
+    db: Session = SessionLocal()
+    if db.query(Operator).count() > 0:
+        db.close()
+        raise HTTPException(status_code=403, detail="すでに設定済みです")
+    op = Operator(
+        username=data.username,
+        display_name=data.display_name,
+        password_hash=_hash_password(data.password),
+        is_admin=True,
+    )
+    db.add(op)
+    db.commit()
+    db.close()
+    return {"status": "ok"}
+
+
 @app.post("/auth/login")
 def login(data: LoginRequest):
     db: Session = SessionLocal()
