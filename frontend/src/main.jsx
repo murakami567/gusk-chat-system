@@ -855,18 +855,6 @@ function GuestPage() {
           {/* ── フォーム画面 ── */}
           {botPhase === "form" && (
             <section className="space-y-4">
-              {!isStayLink && (
-                <a
-                  href="/checkin"
-                  className="flex items-center justify-between rounded-2xl bg-slate-900 text-white px-5 py-4 no-underline"
-                >
-                  <div>
-                    <p className="font-bold text-base">チェックイン手続き</p>
-                    <p className="text-xs text-slate-400 mt-0.5">オンラインチェックインはこちら</p>
-                  </div>
-                  <span className="text-2xl">→</span>
-                </a>
-              )}
               {isStayLink ? (
                 <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
                   <div className="text-sm text-slate-500">滞在中のお問い合わせ</div>
@@ -922,6 +910,18 @@ function GuestPage() {
           {/* ── チャット履歴（フォーム以外で常に表示）── */}
           {botPhase !== "form" && (
             <>
+              {!isStayLink && (
+                <a
+                  href={`/checkin?property=${encodeURIComponent(propertyName)}`}
+                  className="flex items-center justify-between rounded-2xl bg-slate-900 text-white px-5 py-4 no-underline"
+                >
+                  <div>
+                    <p className="font-bold text-base">チェックイン手続き</p>
+                    <p className="text-xs text-slate-400 mt-0.5">オンラインチェックインはこちら</p>
+                  </div>
+                  <span className="text-2xl">→</span>
+                </a>
+              )}
               <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-xs text-slate-500">
                 {propertyName} {roomNumber && `${roomNumber}号室`} / チャットID：{roomId}
               </div>
