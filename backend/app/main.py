@@ -339,6 +339,7 @@ def _fetch_beds24_csv(from_date: str, to_date: str) -> list[dict]:
     idx = {
         "ref":       col("Ref"),
         "apiref":    col("ApiRef"),
+        "notes":     col("Notes"),
         "property":  col("Property"),
         "unit":      col("Unit"),
         "first":     col("FirstNight"),
@@ -383,6 +384,7 @@ def _fetch_beds24_csv(from_date: str, to_date: str) -> list[dict]:
         bookings.append({
             "booking_id":    ref,
             "api_ref":       g("apiref"),
+            "notes_ref":     g("notes"),
             "property_name": g("property"),
             "room_number":   g("unit"),
             "checkin_date":  g("first"),
@@ -1163,6 +1165,7 @@ def verify_identity(data: IdentityVerifyRequest):
         ref_match = (
             input_stripped == b["booking_id"].strip()
             or input_stripped == b.get("api_ref", "").strip()
+            or input_stripped == b.get("notes_ref", "").strip()
         )
         if name_match or ref_match:
             matched_booking = b
