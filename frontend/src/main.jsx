@@ -2112,8 +2112,8 @@ function CheckinPage() {
   const params = new URLSearchParams(window.location.search);
   const propertyFromUrl = params.get("property") || "";
 
-  // phase: select_property | guide | verify | no_booking | form | done
-  const [phase, setPhase] = useState(propertyFromUrl ? "guide" : "select_property");
+  // phase: select_property | verify | guide | no_booking | form | done
+  const [phase, setPhase] = useState(propertyFromUrl ? "verify" : "select_property");
   const [selectedProperty, setSelectedProperty] = useState(propertyFromUrl);
   const [allProperties, setAllProperties] = useState([]);
   const [guide, setGuide] = useState(null); // null=読込中, ""=未設定
@@ -2149,7 +2149,7 @@ function CheckinPage() {
 
   function proceedWithProperty(propName) {
     setSelectedProperty(propName);
-    setPhase("guide");
+    setPhase("verify");
   }
 
   async function verifyIdentity() {
@@ -2173,7 +2173,7 @@ function CheckinPage() {
         guest_name: data.booking?.guest_name || "",
         guest_count: data.booking?.guest_count || 1,
       }));
-      setPhase("form");
+      setPhase("guide");
     } catch {
       setVerifyError("通信エラーが発生しました");
     } finally {
@@ -2269,7 +2269,7 @@ function CheckinPage() {
                   )}
 
                   <button
-                    onClick={() => setPhase("verify")}
+                    onClick={() => setPhase("form")}
                     className="w-full rounded-xl bg-slate-900 text-white py-3.5 font-bold text-sm"
                   >
                     確認しました
