@@ -333,6 +333,7 @@ def _fetch_beds24_csv(from_date: str, to_date: str) -> list[dict]:
 
     idx = {
         "ref":       col("Ref"),
+        "apiref":    col("ApiRef"),
         "property":  col("Property"),
         "unit":      col("Unit"),
         "first":     col("FirstNight"),
@@ -376,6 +377,7 @@ def _fetch_beds24_csv(from_date: str, to_date: str) -> list[dict]:
 
         bookings.append({
             "booking_id":    ref,
+            "api_ref":       g("apiref"),
             "property_name": g("property"),
             "room_number":   g("unit"),
             "checkin_date":  g("first"),
@@ -1137,15 +1139,19 @@ def verify_identity(data: IdentityVerifyRequest):
     if not property_matched:
         raise HTTPException(status_code=404, detail="本日のご予約が見つかりません")
 
-    # 名前または予約番号で照合
+    # 名前または予約番号（Beds24 Ref / Airbnb ApiRef 両対応）で照合
     normalized_input = _normalize_name(data.guest_input)
+    input_stripped = data.guest_input.strip()
     matched_booking = None
     for b in property_matched:
         name_match = normalized_input and (
             normalized_input in _normalize_name(b["guest_name"])
             or _normalize_name(b["guest_name"]) in normalized_input
         )
-        ref_match = data.guest_input.strip() == b["booking_id"].strip()
+        ref_match = (
+            input_stripped == b["booking_id"].strip()
+            or input_stripped == b.get("api_ref", "").strip()
+        )
         if name_match or ref_match:
             matched_booking = b
             break
