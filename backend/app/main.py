@@ -28,8 +28,9 @@ def _verify_password(password: str, hashed: str) -> bool:
     return _bcrypt.checkpw(password.encode(), hashed.encode())
 
 SECRET_KEY = os.getenv("SECRET_KEY", "changeme-set-SECRET_KEY-in-production")
-BEDS24_REFRESH_TOKEN = os.getenv("BEDS24_REFRESH_TOKEN", "")
-BEDS24_USER_ID = os.getenv("BEDS24_USER_ID", "")
+BEDS24_CSV_USERNAME = os.getenv("BEDS24_CSV_USERNAME", "")
+BEDS24_CSV_PASSWORD = os.getenv("BEDS24_CSV_PASSWORD", "")
+BEDS24_CSV_URL = "https://www.beds24.com/api/csv/getbookingscsv"
 
 from datetime import date as _date
 
@@ -294,71 +295,108 @@ def _send_escalation_email(
         pass
 
 
-def _get_beds24_access_token() -> str | None:
-    if not BEDS24_REFRESH_TOKEN:
-        return None
-    try:
-        params = {"token": BEDS24_REFRESH_TOKEN}
-        if BEDS24_USER_ID:
-            params["userId"] = BEDS24_USER_ID
-        url = "https://beds24.com/api/v2/authentication/token?" + urllib.parse.urlencode(params)
-        with urllib.request.urlopen(url, timeout=15) as resp:
-            return json.loads(resp.read()).get("token")
-    except Exception:
-        return None
-
-
-def _search_beds24_bookings(search: str | None = None, checkin_date: str | None = None) -> list:
-    token = _get_beds24_access_token()
-    if not token:
-        raise HTTPException(status_code=503, detail="Beds24が設定されていません（BEDS24_REFRESH_TOKEN）")
-
-    params: dict = {}
-    if search:
-        params["searchString"] = search
-    if checkin_date:
-        params["arrivalFrom"] = checkin_date
-        params["arrivalTo"] = checkin_date
-
-    query = urllib.parse.urlencode(params)
-    req = urllib.request.Request(
-        f"https://beds24.com/api/v2/bookings?{query}",
-        headers={"token": token},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read())
-            if isinstance(data, list):
-                return data
-            return data.get("bookings", []) if isinstance(data, dict) else []
-    except urllib.error.HTTPError as e:
-        raise HTTPException(status_code=e.code, detail=f"Beds24 APIエラー: {e.reason}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Beds24 接続エラー: {str(e)}")
-
-
-def _match_room(b_prop: str, b_room: str, prop: str, room: str) -> bool:
-    return b_prop.strip() == prop.strip() and b_room.strip() == room.strip()
-
-
 def _normalize_name(name: str) -> str:
     return name.strip().lower().replace(" ", "").replace("　", "")
 
 
-def _parse_beds24_booking(b: dict) -> dict:
-    first = str(b.get("firstName") or b.get("guestFirstName") or "").strip()
-    last = str(b.get("lastName") or b.get("guestName") or "").strip()
-    full_name = f"{first} {last}".strip() if first or last else str(b.get("fullName") or "")
-    return {
-        "booking_id": str(b.get("id") or b.get("bookingId") or ""),
-        "property_name": str(b.get("propName") or b.get("propertyName") or ""),
-        "room_number": str(b.get("unitName") or b.get("roomName") or b.get("unitId") or ""),
-        "checkin_date": str(b.get("arrival") or b.get("firstNight") or ""),
-        "checkout_date": str(b.get("departure") or b.get("lastNight") or ""),
-        "guest_name": full_name,
-        "guest_count": int(b.get("numAdult") or b.get("adults") or 1),
-        "status": str(b.get("status") or ""),
+def _fetch_beds24_csv(from_date: str, to_date: str) -> list[dict]:
+    if not BEDS24_CSV_USERNAME or not BEDS24_CSV_PASSWORD:
+        raise HTTPException(status_code=503, detail="Beds24が設定されていません（BEDS24_CSV_USERNAME / BEDS24_CSV_PASSWORD）")
+
+    import csv as _csv
+    import io as _io
+
+    payload = urllib.parse.urlencode({
+        "username": BEDS24_CSV_USERNAME,
+        "password": BEDS24_CSV_PASSWORD,
+        "datefrom": from_date,
+        "dateto": to_date,
+    }).encode()
+    req = urllib.request.Request(BEDS24_CSV_URL, data=payload, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            csv_text = resp.read().decode("utf-8-sig")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Beds24 接続エラー: {str(e)}")
+
+    rows = list(_csv.reader(_io.StringIO(csv_text)))
+    if not rows:
+        return []
+
+    header = [h.strip() for h in rows[0]]
+
+    def col(name):
+        try:
+            return header.index(name)
+        except ValueError:
+            return -1
+
+    idx = {
+        "ref":      col("Ref"),
+        "property": col("Property"),
+        "unit":     col("Unit"),
+        "first":    col("FirstNight"),
+        "checkout": col("Check Out"),
+        "full":     col("Full Name"),
+        "adult":    col("Adult"),
+        "child":    col("Child"),
+        "status":   col("Status"),
+        "title":    col("Title"),
     }
+
+    bookings = []
+    for row in rows[1:]:
+        def g(k):
+            i = idx.get(k, -1)
+            return row[i].strip() if i >= 0 and i < len(row) else ""
+
+        if g("status") == "Cancelled":
+            continue
+        title = g("title")
+        if "ブロック" in title or "予備部屋" in title:
+            continue
+
+        ref = g("ref")
+        if not ref:
+            continue
+
+        try:
+            adults = int(g("adult") or 0)
+        except Exception:
+            adults = 0
+        try:
+            children = int(g("child") or 0)
+        except Exception:
+            children = 0
+
+        bookings.append({
+            "booking_id":    ref,
+            "property_name": g("property"),
+            "room_number":   g("unit"),
+            "checkin_date":  g("first"),
+            "checkout_date": g("checkout"),
+            "guest_name":    g("full"),
+            "guest_count":   adults + children or 1,
+            "status":        g("status"),
+        })
+
+    return bookings
+
+
+def _search_beds24_bookings(search: str | None = None, checkin_date: str | None = None) -> list:
+    from_date = checkin_date or str(_date.today())
+    to_date   = checkin_date or str(_date.today())
+    bookings  = _fetch_beds24_csv(from_date, to_date)
+
+    if search:
+        s = _normalize_name(search)
+        bookings = [
+            b for b in bookings
+            if s in _normalize_name(b["guest_name"])
+            or s == b["booking_id"]
+        ]
+
+    return bookings
 
 
 def require_auth(authorization: str = Header(None)) -> dict:
@@ -1059,15 +1097,12 @@ def get_today_booking(property_name: str, room_number: str):
     """部屋QRコード用：今日のチェックイン予約の存在確認のみ（キーコードは返さない）"""
     today = _date.today().isoformat()
     bookings = _search_beds24_bookings(checkin_date=today)
-    active = [b for b in bookings if str(b.get("status", "")) not in ("-1", "cancelled", "2")]
+    active = [b for b in bookings if b.get("status", "") not in ("-1", "cancelled", "2", "Cancelled")]
 
     matched = [
         b for b in active
-        if _match_room(
-            str(b.get("propName") or b.get("propertyName") or ""),
-            str(b.get("unitName") or b.get("roomName") or b.get("unitId") or ""),
-            property_name, room_number,
-        )
+        if b["property_name"].strip() == property_name.strip()
+        and b["room_number"].strip() == room_number.strip()
     ]
 
     if not matched:
@@ -1081,17 +1116,17 @@ def verify_identity(data: IdentityVerifyRequest):
     """物件の本日チェックイン予約からゲストを照合し、一致した場合のみ予約情報を返す"""
     today = _date.today().isoformat()
     bookings = _search_beds24_bookings(checkin_date=today)
-    active = [b for b in bookings if str(b.get("status", "")) not in ("-1", "cancelled", "2")]
+    active = [b for b in bookings if b.get("status", "") not in ("-1", "cancelled", "2", "Cancelled")]
 
     # 物件でフィルタ（部屋番号は任意）
     property_matched = [
         b for b in active
-        if str(b.get("propName") or b.get("propertyName") or "").strip() == data.property_name.strip()
+        if b["property_name"].strip() == data.property_name.strip()
     ]
     if data.room_number:
         property_matched = [
             b for b in property_matched
-            if str(b.get("unitName") or b.get("roomName") or b.get("unitId") or "").strip() == data.room_number.strip()
+            if b["room_number"].strip() == data.room_number.strip()
         ]
 
     if not property_matched:
@@ -1101,14 +1136,13 @@ def verify_identity(data: IdentityVerifyRequest):
     normalized_input = _normalize_name(data.guest_input)
     matched_booking = None
     for b in property_matched:
-        parsed = _parse_beds24_booking(b)
         name_match = normalized_input and (
-            normalized_input in _normalize_name(parsed["guest_name"])
-            or _normalize_name(parsed["guest_name"]) in normalized_input
+            normalized_input in _normalize_name(b["guest_name"])
+            or _normalize_name(b["guest_name"]) in normalized_input
         )
-        ref_match = data.guest_input.strip() == parsed["booking_id"].strip()
+        ref_match = data.guest_input.strip() == b["booking_id"].strip()
         if name_match or ref_match:
-            matched_booking = parsed
+            matched_booking = b
             break
 
     if not matched_booking:
@@ -1125,12 +1159,11 @@ def get_admin_today_checkins(op: dict = Depends(require_auth)):
     """管理者用：今日のチェックイン一覧＋各部屋のキーコード"""
     today = _date.today().isoformat()
     bookings = _search_beds24_bookings(checkin_date=today)
-    active = [b for b in bookings if str(b.get("status", "")) not in ("-1", "cancelled", "2")]
-    parsed = [_parse_beds24_booking(b) for b in active]
+    active = [b for b in bookings if b.get("status", "") not in ("-1", "cancelled", "2", "Cancelled")]
 
     db: Session = SessionLocal()
     result = []
-    for b in parsed:
+    for b in active:
         key = (
             db.query(KeyCode)
             .filter(KeyCode.property_name == b["property_name"], KeyCode.room_number == b["room_number"])
@@ -1151,11 +1184,11 @@ def checkin_verify(data: CheckinVerifyRequest):
     bookings = _search_beds24_bookings(search=search, checkin_date=data.checkin_date)
 
     # キャンセルを除外
-    active = [b for b in bookings if str(b.get("status", "")) not in ("-1", "cancelled", "2")]
+    active = [b for b in bookings if b.get("status", "") not in ("-1", "cancelled", "2", "Cancelled")]
     if not active:
         raise HTTPException(status_code=404, detail="予約が見つかりません。予約番号・お名前・日付をご確認ください。")
 
-    return {"bookings": [_parse_beds24_booking(b) for b in active[:5]]}
+    return {"bookings": active[:5]}
 
 
 @app.post("/checkin/submit")
