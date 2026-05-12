@@ -332,16 +332,17 @@ def _fetch_beds24_csv(from_date: str, to_date: str) -> list[dict]:
             return -1
 
     idx = {
-        "ref":      col("Ref"),
-        "property": col("Property"),
-        "unit":     col("Unit"),
-        "first":    col("FirstNight"),
-        "checkout": col("Check Out"),
-        "full":     col("Full Name"),
-        "adult":    col("Adult"),
-        "child":    col("Child"),
-        "status":   col("Status"),
-        "title":    col("Title"),
+        "ref":       col("Ref"),
+        "property":  col("Property"),
+        "unit":      col("Unit"),
+        "first":     col("FirstNight"),
+        "checkout":  col("CheckOut"),
+        "firstname": col("First Name"),
+        "lastname":  col("Name"),
+        "adult":     col("Adult"),
+        "child":     col("Child"),
+        "status":    col("Status"),
+        "title":     col("Title"),
     }
 
     bookings = []
@@ -369,13 +370,17 @@ def _fetch_beds24_csv(from_date: str, to_date: str) -> list[dict]:
         except Exception:
             children = 0
 
+        first_name = g("firstname")
+        last_name  = g("lastname")
+        guest_name = f"{first_name} {last_name}".strip()
+
         bookings.append({
             "booking_id":    ref,
             "property_name": g("property"),
             "room_number":   g("unit"),
             "checkin_date":  g("first"),
             "checkout_date": g("checkout"),
-            "guest_name":    g("full"),
+            "guest_name":    guest_name,
             "guest_count":   adults + children or 1,
             "status":        g("status"),
         })
@@ -1101,7 +1106,7 @@ def get_today_booking(property_name: str, room_number: str):
 
     matched = [
         b for b in active
-        if b["property_name"].strip() == property_name.strip()
+        if b["property_name"].strip().startswith(property_name.strip())
         and b["room_number"].strip() == room_number.strip()
     ]
 
@@ -1118,10 +1123,10 @@ def verify_identity(data: IdentityVerifyRequest):
     bookings = _search_beds24_bookings(checkin_date=today)
     active = [b for b in bookings if b.get("status", "") not in ("-1", "cancelled", "2", "Cancelled")]
 
-    # 物件でフィルタ（部屋番号は任意）
+    # 物件でフィルタ（Beds24のProperty列は「美野島401」のように物件名+部屋が混在するため startswith で照合）
     property_matched = [
         b for b in active
-        if b["property_name"].strip() == data.property_name.strip()
+        if b["property_name"].strip().startswith(data.property_name.strip())
     ]
     if data.room_number:
         property_matched = [
