@@ -2633,7 +2633,11 @@ function KeyCodeSection() {
             <select value={form.property_name} onChange={(e) => setForm({ ...form, property_name: e.target.value })}
               className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none bg-white">
               <option value="">選択してください</option>
-              {properties.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
+              {properties.map((p) => {
+                const val = p.beds24_property_name || p.name;
+                const label = p.beds24_property_name ? `${p.name}（${p.beds24_property_name}）` : p.name;
+                return <option key={p.id} value={val}>{label}</option>;
+              })}
             </select>
           </div>
           <div>
