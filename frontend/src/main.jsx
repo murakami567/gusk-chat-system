@@ -2760,6 +2760,287 @@ function CheckinRecordsSection() {
   );
 }
 
+// ── 物件別ランディングページ ──────────────────────────────────────────────────
+
+function PropertyPage({ propertyName }) {
+  const [mode, setMode] = useState(null); // null | "chat"
+  const [roomNumber, setRoomNumber] = useState("");
+  const [guestContact, setGuestContact] = useState("");
+  const [roomId, setRoomId] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [textInput, setTextInput] = useState("");
+  const [botPhase, setBotPhase] = useState("form");
+  const [categories, setCategories] = useState([]);
+  const [templateStack, setTemplateStack] = useState([]);
+  const [pendingEscalationCat, setPendingEscalationCat] = useState(null);
+  const [escalationNote, setEscalationNote] = useState("");
+  const currentTemplates = templateStack[templateStack.length - 1] || [];
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+  useEffect(() => {
+    if (!roomId) return;
+    const t = setInterval(() => loadMessages(roomId), 3000);
+    return () => clearInterval(t);
+  }, [roomId]);
+
+  async function startChat() {
+    if (!guestContact.trim()) { alert("メールアドレスまたは電話番号を入力してください"); return; }
+    const res = await fetch(`${API_BASE}/guest/chat/start`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ property_name: propertyName, room_number: roomNumber || "未設定", guest_contact: guestContact }),
+    });
+    const data = await res.json();
+    const id = data.chat_room_id;
+    setRoomId(id);
+    await loadMessages(id);
+    const catRes = await fetch(`${API_BASE}/categories?property_name=${encodeURIComponent(propertyName)}`);
+    const catData = await catRes.json();
+    setCategories(catData.categories || []);
+    setBotPhase("category");
+  }
+
+  async function selectCategory(cat) {
+    if (cat.is_escalation) { setPendingEscalationCat(cat); setEscalationNote(""); setBotPhase("escalation_form"); return; }
+    const res = await fetch(`${API_BASE}/guest/chat/${roomId}/select-category`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ category_id: cat.id }),
+    });
+    const data = await res.json();
+    await loadMessages(roomId);
+    if (data.escalated) setBotPhase("escalated");
+    else if (data.templates.length > 0) { setTemplateStack([data.templates]); setBotPhase("templates"); }
+    else setBotPhase("chat");
+  }
+
+  async function submitEscalationForm() {
+    if (!escalationNote.trim()) { alert("お問い合わせ内容をご記入ください"); return; }
+    await fetch(`${API_BASE}/guest/chat/${roomId}/messages`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sender_type: "guest", message: escalationNote }),
+    });
+    const res = await fetch(`${API_BASE}/guest/chat/${roomId}/select-category`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ category_id: pendingEscalationCat.id }),
+    });
+    const data = await res.json();
+    await loadMessages(roomId);
+    setPendingEscalationCat(null); setEscalationNote("");
+    setBotPhase(data.escalated ? "escalated" : "chat");
+  }
+
+  async function selectTemplate(template) {
+    const res = await fetch(`${API_BASE}/guest/chat/${roomId}/select-template`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ template_id: template.id }),
+    });
+    const data = await res.json();
+    await loadMessages(roomId);
+    if (data.children.length > 0) setTemplateStack((prev) => [...prev, data.children]);
+    else setBotPhase("resolved_check");
+  }
+
+  function goBackTemplates() {
+    if (templateStack.length <= 1) { setTemplateStack([]); setBotPhase("category"); }
+    else setTemplateStack((prev) => prev.slice(0, -1));
+  }
+
+  async function loadMessages(id) {
+    if (!id) return;
+    const res = await fetch(`${API_BASE}/guest/chat/${id}/messages`);
+    const data = await res.json();
+    const msgs = data.messages || [];
+    setMessages(msgs);
+    const hasOp = msgs.some((m) => m.sender_type === "operator");
+    if (hasOp) setBotPhase((prev) => (prev === "escalated" || prev === "chat" ? prev : "chat"));
+  }
+
+  async function sendTextMessage() {
+    if (!roomId || !textInput.trim()) return;
+    await fetch(`${API_BASE}/guest/chat/${roomId}/messages`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sender_type: "guest", message: textInput }),
+    });
+    setTextInput(""); loadMessages(roomId);
+  }
+
+  async function sendImageMessage(file) {
+    if (!roomId || !file) return;
+    try {
+      const base64 = await compressImage(file);
+      await fetch(`${API_BASE}/guest/chat/${roomId}/messages`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sender_type: "guest", message: base64 }),
+      });
+      loadMessages(roomId);
+    } catch { alert("画像の送信に失敗しました"); }
+  }
+
+  return (
+    <div className="min-h-screen bg-white text-slate-900 flex justify-center">
+      <div className="w-full max-w-[430px] min-h-screen border-x border-slate-200 flex flex-col">
+        <header className="sticky top-0 z-10 bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-3">
+          {mode && <button onClick={() => { setMode(null); setBotPhase("form"); setRoomId(null); setMessages([]); }} className="text-slate-400 text-lg leading-none">←</button>}
+          <div>
+            <h1 className="font-bold text-lg">{propertyName}</h1>
+            <p className="text-xs text-slate-500">{mode === "chat" ? "ゲストサポート" : "ようこそ"}</p>
+          </div>
+        </header>
+
+        <main className="flex-1 overflow-y-auto px-4 py-6 space-y-4 pb-28">
+
+          {/* ── ランディング ── */}
+          {!mode && (
+            <div className="space-y-3 pt-4">
+              <a
+                href={`/checkin?property=${encodeURIComponent(propertyName)}`}
+                className="flex items-center justify-between rounded-2xl bg-slate-900 text-white px-5 py-5 no-underline"
+              >
+                <div>
+                  <p className="font-bold text-base">チェックイン手続き</p>
+                  <p className="text-xs text-slate-400 mt-0.5">オンラインチェックインはこちら</p>
+                </div>
+                <span className="text-2xl">→</span>
+              </a>
+              <button
+                onClick={() => setMode("chat")}
+                className="w-full flex items-center justify-between rounded-2xl border border-slate-200 px-5 py-5"
+              >
+                <div className="text-left">
+                  <p className="font-bold text-base">お問い合わせ・チャット</p>
+                  <p className="text-xs text-slate-500 mt-0.5">スタッフにご連絡</p>
+                </div>
+                <span className="text-2xl text-slate-400">→</span>
+              </button>
+            </div>
+          )}
+
+          {/* ── チャットフォーム ── */}
+          {mode === "chat" && botPhase === "form" && (
+            <section className="space-y-4">
+              <div>
+                <label className="text-sm font-bold">部屋番号 <span className="text-slate-400 font-normal text-xs">任意</span></label>
+                <input value={roomNumber} onChange={(e) => setRoomNumber(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none" placeholder="例：101" />
+              </div>
+              <div>
+                <label className="text-sm font-bold">メールアドレス または 電話番号</label>
+                <input value={guestContact} onChange={(e) => setGuestContact(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && startChat()}
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+                  placeholder="例：guest@example.com / 090-xxxx-xxxx" />
+              </div>
+              <button onClick={startChat} className="w-full rounded-xl bg-blue-600 text-white py-3 font-bold">チャットを開始</button>
+            </section>
+          )}
+
+          {/* ── チャット開始後 ── */}
+          {mode === "chat" && botPhase !== "form" && (
+            <>
+              <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-xs text-slate-500">
+                {propertyName} {roomNumber && `${roomNumber}号室`} / チャットID：{roomId}
+              </div>
+              <div className="space-y-3">
+                {messages.map((m) => {
+                  const isGuest = m.sender_type === "guest";
+                  return (
+                    <div key={m.id} className={`flex ${isGuest ? "justify-end" : "justify-start"}`}>
+                      <div className={`max-w-[82%] rounded-2xl px-4 py-3 text-sm ${isGuest ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-800"}`}>
+                        {m.message.startsWith("data:image/") ? <ChatImage src={m.message} /> : <p className="whitespace-pre-wrap">{m.message}</p>}
+                      </div>
+                    </div>
+                  );
+                })}
+                <div ref={messagesEndRef} />
+              </div>
+            </>
+          )}
+
+          {mode === "chat" && botPhase === "category" && (
+            <div className="space-y-3">
+              <p className="text-sm font-bold text-slate-700">お問い合わせ内容をお選びください</p>
+              <div className="grid grid-cols-2 gap-2">
+                {categories.map((cat) => (
+                  <button key={cat.id} onClick={() => selectCategory(cat)}
+                    className={`rounded-xl border px-3 py-4 text-sm text-left font-medium transition ${cat.is_escalation ? "bg-red-50 border-red-300 text-red-700" : "bg-white border-slate-300 hover:bg-slate-50"}`}>
+                    {cat.is_escalation && <span className="block text-xs text-red-500 mb-1">緊急</span>}
+                    {cat.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {mode === "chat" && botPhase === "templates" && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-bold text-slate-700">詳しい内容をお選びください</p>
+                <button onClick={goBackTemplates} className="text-xs text-blue-600 underline">
+                  {templateStack.length <= 1 ? "カテゴリに戻る" : "前に戻る"}
+                </button>
+              </div>
+              <div className="space-y-2">
+                {currentTemplates.map((tmpl) => (
+                  <button key={tmpl.id} onClick={() => selectTemplate(tmpl)}
+                    className="w-full text-left rounded-xl border border-slate-200 px-4 py-3 text-sm hover:bg-slate-50">
+                    {tmpl.title}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {mode === "chat" && botPhase === "escalation_form" && pendingEscalationCat && (
+            <div className="space-y-3">
+              <p className="text-sm font-bold text-red-700">緊急のお問い合わせ内容をご記入ください</p>
+              <textarea value={escalationNote} onChange={(e) => setEscalationNote(e.target.value)}
+                className="w-full rounded-xl border border-red-200 px-4 py-3 text-sm outline-none min-h-[100px]"
+                placeholder="状況をできるだけ詳しくご記入ください" />
+              <button onClick={submitEscalationForm} className="w-full rounded-xl bg-red-600 text-white py-3 font-bold text-sm">送信する</button>
+            </div>
+          )}
+
+          {mode === "chat" && botPhase === "resolved_check" && (
+            <div className="space-y-3">
+              <p className="text-sm font-bold text-slate-700">問題は解決しましたか？</p>
+              <div className="flex gap-2">
+                <button onClick={() => setBotPhase("category")} className="flex-1 rounded-xl border border-slate-200 py-3 text-sm">別の質問をする</button>
+                <button onClick={() => setBotPhase("done")} className="flex-1 rounded-xl bg-slate-900 text-white py-3 text-sm font-bold">解決しました</button>
+              </div>
+            </div>
+          )}
+
+          {mode === "chat" && botPhase === "done" && (
+            <div className="rounded-2xl bg-emerald-50 border border-emerald-200 p-5 text-center space-y-2">
+              <p className="text-lg">✓</p>
+              <p className="font-bold text-emerald-700">ありがとうございました</p>
+              <p className="text-sm text-slate-500">またご不明な点がありましたらお気軽にご連絡ください。</p>
+            </div>
+          )}
+
+          {mode === "chat" && (botPhase === "escalated" || botPhase === "chat") && (
+            <div className="rounded-2xl bg-blue-50 border border-blue-200 p-4 text-sm text-blue-700">
+              スタッフが確認次第ご返信いたします。しばらくお待ちください。
+            </div>
+          )}
+        </main>
+
+        {/* ── 入力欄 ── */}
+        {mode === "chat" && (botPhase === "escalated" || botPhase === "chat") && (
+          <footer className="sticky bottom-0 bg-white border-t border-slate-200 px-4 py-3 flex gap-2 items-end">
+            <label className="cursor-pointer text-slate-400 text-xl shrink-0 pb-1">
+              📎
+              <input type="file" accept="image/*" className="hidden" onChange={(e) => { if (e.target.files[0]) sendImageMessage(e.target.files[0]); e.target.value = ""; }} />
+            </label>
+            <textarea value={textInput} onChange={(e) => setTextInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendTextMessage(); } }}
+              className="flex-1 resize-none rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none max-h-32"
+              rows={1} placeholder="メッセージを入力..." />
+            <button onClick={sendTextMessage} className="rounded-xl bg-blue-600 text-white px-4 py-2.5 text-sm font-bold shrink-0">送信</button>
+          </footer>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── ルーティング ───────────────────────────────────────────────────────────────
 
 function App() {
@@ -2767,6 +3048,10 @@ function App() {
   if (window.location.pathname.startsWith("/templates")) return <TemplatePage />;
   if (window.location.pathname.startsWith("/operator")) return <OperatorPage />;
   if (window.location.pathname.startsWith("/checkin")) return <CheckinPage />;
+  const params = new URLSearchParams(window.location.search);
+  const propertyFromUrl = params.get("property") || "";
+  const roomFromUrl = params.get("room") || "";
+  if (propertyFromUrl && !roomFromUrl) return <PropertyPage propertyName={propertyFromUrl} />;
   return <GuestPage />;
 }
 
