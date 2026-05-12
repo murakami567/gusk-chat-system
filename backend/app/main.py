@@ -49,6 +49,10 @@ def _run_migrations():
             ALTER TABLE properties
             ADD COLUMN IF NOT EXISTS checkin_guide TEXT
         """))
+        conn.execute(text("""
+            ALTER TABLE properties
+            ADD COLUMN IF NOT EXISTS beds24_property_name TEXT
+        """))
         conn.commit()
 
     # ADMIN_USERNAME が存在しない場合のみ初期管理者を作成
@@ -108,6 +112,7 @@ class PropertyRequest(BaseModel):
 
 class PropertyGuideRequest(BaseModel):
     checkin_guide: str
+    beds24_property_name: str | None = None
 
 
 class SettingRequest(BaseModel):
@@ -588,7 +593,7 @@ def delete_operator(operator_id: int, op: dict = Depends(require_admin)):
 def get_properties():
     db: Session = SessionLocal()
     props = db.query(Property).order_by(Property.name.asc()).all()
-    result = [{"id": p.id, "name": p.name, "checkin_guide": p.checkin_guide, "created_at": p.created_at} for p in props]
+    result = [{"id": p.id, "name": p.name, "checkin_guide": p.checkin_guide, "beds24_property_name": p.beds24_property_name, "created_at": p.created_at} for p in props]
     db.close()
     return {"properties": result}
 
@@ -612,6 +617,8 @@ def update_property_guide(property_id: int, data: PropertyGuideRequest, op: dict
         db.close()
         raise HTTPException(status_code=404, detail="property not found")
     prop.checkin_guide = data.checkin_guide
+    if data.beds24_property_name is not None:
+        prop.beds24_property_name = data.beds24_property_name or None
     db.commit()
     db.close()
     return {"status": "ok"}
@@ -1125,10 +1132,15 @@ def verify_identity(data: IdentityVerifyRequest):
     bookings = _search_beds24_bookings(checkin_date=today)
     active = [b for b in bookings if b.get("status", "") not in ("-1", "cancelled", "2", "Cancelled")]
 
-    # 物件でフィルタ（Beds24のProperty列は「美野島401」のように物件名+部屋が混在するため startswith で照合）
+    # beds24_property_name が設定されていればそちらで照合、なければ property_name で照合
+    db: Session = SessionLocal()
+    prop = db.query(Property).filter(Property.name == data.property_name).first()
+    beds24_name = (prop.beds24_property_name or data.property_name).strip() if prop else data.property_name.strip()
+    db.close()
+
     property_matched = [
         b for b in active
-        if b["property_name"].strip().startswith(data.property_name.strip())
+        if b["property_name"].strip().startswith(beds24_name)
     ]
     if data.room_number:
         property_matched = [

@@ -1319,6 +1319,7 @@ function PropertySection() {
   const [name, setName] = useState("");
   const [editingGuideId, setEditingGuideId] = useState(null);
   const [guideText, setGuideText] = useState("");
+  const [beds24Name, setBeds24Name] = useState("");
 
   async function load() {
     const res = await fetch(`${API_BASE}/properties`);
@@ -1347,13 +1348,14 @@ function PropertySection() {
   function startEditGuide(p) {
     setEditingGuideId(p.id);
     setGuideText(p.checkin_guide || "");
+    setBeds24Name(p.beds24_property_name || "");
   }
 
   async function saveGuide(id) {
     await authFetch(`${API_BASE}/properties/${id}/guide`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ checkin_guide: guideText }),
+      body: JSON.stringify({ checkin_guide: guideText, beds24_property_name: beds24Name }),
     });
     setEditingGuideId(null);
     load();
@@ -1413,6 +1415,16 @@ function PropertySection() {
 
               {editingGuideId === p.id ? (
                 <div className="space-y-2">
+                  <div>
+                    <label className="text-xs font-bold text-slate-500">Beds24での物件名</label>
+                    <input
+                      value={beds24Name}
+                      onChange={(e) => setBeds24Name(e.target.value)}
+                      className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none"
+                      placeholder="例：やなぎ橋（Beds24に登録されている名前）"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">未入力の場合は物件名をそのまま使用</p>
+                  </div>
                   <textarea
                     value={guideText}
                     onChange={(e) => setGuideText(e.target.value)}
@@ -1434,12 +1446,19 @@ function PropertySection() {
                     </button>
                   </div>
                 </div>
-              ) : p.checkin_guide ? (
-                <p className="text-xs text-slate-500 bg-slate-50 rounded-xl px-3 py-2 line-clamp-2 whitespace-pre-wrap">
-                  {p.checkin_guide}
-                </p>
               ) : (
-                <p className="text-xs text-amber-500">案内文が未設定です</p>
+                <div className="space-y-1">
+                  {p.beds24_property_name && (
+                    <p className="text-xs text-blue-600">Beds24: {p.beds24_property_name}</p>
+                  )}
+                  {p.checkin_guide ? (
+                    <p className="text-xs text-slate-500 bg-slate-50 rounded-xl px-3 py-2 line-clamp-2 whitespace-pre-wrap">
+                      {p.checkin_guide}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-amber-500">案内文が未設定です</p>
+                  )}
+                </div>
               )}
             </div>
           ))}
