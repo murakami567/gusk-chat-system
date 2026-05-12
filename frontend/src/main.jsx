@@ -2211,7 +2211,7 @@ function CheckinPage() {
       const res = await fetch(`${API_BASE}/checkin/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...booking, ...guestForm }),
+        body: JSON.stringify({ ...booking, ...guestForm, property_name: selectedProperty }),
       });
       const data = await res.json();
       if (!res.ok) { setFormError(data.detail || "エラーが発生しました"); return; }

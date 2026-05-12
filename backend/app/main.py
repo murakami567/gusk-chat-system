@@ -1234,9 +1234,12 @@ def checkin_submit(data: CheckinSubmitRequest):
     db.add(record)
     db.commit()
 
+    # キーコードはBeds24物件名で保存されているため beds24_property_name に変換して検索
+    prop = db.query(Property).filter(Property.name == data.property_name).first()
+    beds24_name = (prop.beds24_property_name or data.property_name) if prop else data.property_name
     key = (
         db.query(KeyCode)
-        .filter(KeyCode.property_name == data.property_name, KeyCode.room_number == data.room_number)
+        .filter(KeyCode.property_name == beds24_name, KeyCode.room_number == data.room_number)
         .first()
     )
     key_code = key.code if key else None
