@@ -855,6 +855,18 @@ function GuestPage() {
           {/* ── フォーム画面 ── */}
           {botPhase === "form" && (
             <section className="space-y-4">
+              {!isStayLink && (
+                <a
+                  href="/checkin"
+                  className="flex items-center justify-between rounded-2xl bg-slate-900 text-white px-5 py-4 no-underline"
+                >
+                  <div>
+                    <p className="font-bold text-base">チェックイン手続き</p>
+                    <p className="text-xs text-slate-400 mt-0.5">オンラインチェックインはこちら</p>
+                  </div>
+                  <span className="text-2xl">→</span>
+                </a>
+              )}
               {isStayLink ? (
                 <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
                   <div className="text-sm text-slate-500">滞在中のお問い合わせ</div>
@@ -1148,6 +1160,9 @@ function TemplatePage() {
   }, []);
 
   const tabs = [
+    { key: "today_checkins", label: "本日のチェックイン" },
+    { key: "keycodes", label: "キーコード管理" },
+    { key: "checkin_records", label: "宿泊者名簿" },
     { key: "properties", label: "物件管理" },
     { key: "categories", label: "カテゴリ管理" },
     { key: "templates", label: "テンプレート管理" },
@@ -1197,6 +1212,9 @@ function TemplatePage() {
         {activeTab === "categories" && <CategorySection />}
         {activeTab === "templates" && <TemplateSection />}
         {activeTab === "settings" && <SettingsSection />}
+        {activeTab === "today_checkins" && <TodayCheckinsSection />}
+        {activeTab === "keycodes" && <KeyCodeSection />}
+        {activeTab === "checkin_records" && <CheckinRecordsSection />}
         {activeTab === "operators" && currentOp?.is_admin && <OperatorsSection />}
       </main>
     </div>
@@ -1299,6 +1317,8 @@ function SettingsSection() {
 function PropertySection() {
   const [properties, setProperties] = useState([]);
   const [name, setName] = useState("");
+  const [editingGuideId, setEditingGuideId] = useState(null);
+  const [guideText, setGuideText] = useState("");
 
   async function load() {
     const res = await fetch(`${API_BASE}/properties`);
@@ -1321,6 +1341,21 @@ function PropertySection() {
   async function remove(id) {
     if (!confirm("この物件を削除しますか？")) return;
     await authFetch(`${API_BASE}/properties/${id}`, { method: "DELETE" });
+    load();
+  }
+
+  function startEditGuide(p) {
+    setEditingGuideId(p.id);
+    setGuideText(p.checkin_guide || "");
+  }
+
+  async function saveGuide(id) {
+    await authFetch(`${API_BASE}/properties/${id}/guide`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ checkin_guide: guideText }),
+    });
+    setEditingGuideId(null);
     load();
   }
 
@@ -1350,21 +1385,62 @@ function PropertySection() {
       <section className="col-span-12 lg:col-span-8 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
         <div className="p-5 border-b border-slate-200">
           <h2 className="font-bold text-lg">登録済み物件</h2>
-          <p className="text-xs text-slate-500">ゲストのチャット開始時に選択肢として表示されます</p>
+          <p className="text-xs text-slate-500">チェックイン案内文はQRコードのページ冒頭に表示されます</p>
         </div>
         <div className="divide-y divide-slate-200">
           {properties.length === 0 && (
             <div className="p-6 text-sm text-slate-500">物件が登録されていません。</div>
           )}
           {properties.map((p) => (
-            <div key={p.id} className="px-5 py-4 flex items-center justify-between">
-              <span className="font-medium">{p.name}</span>
-              <button
-                onClick={() => remove(p.id)}
-                className="rounded-xl border border-red-200 text-red-600 px-3 py-2 text-sm"
-              >
-                削除
-              </button>
+            <div key={p.id} className="px-5 py-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="font-medium">{p.name}</span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => startEditGuide(p)}
+                    className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                  >
+                    案内文を編集
+                  </button>
+                  <button
+                    onClick={() => remove(p.id)}
+                    className="rounded-xl border border-red-200 text-red-600 px-3 py-2 text-sm"
+                  >
+                    削除
+                  </button>
+                </div>
+              </div>
+
+              {editingGuideId === p.id ? (
+                <div className="space-y-2">
+                  <textarea
+                    value={guideText}
+                    onChange={(e) => setGuideText(e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none min-h-[120px] resize-y"
+                    placeholder={`例：\n玄関横の鍵ボックスの「開」ボタンを押し、4桁のコードを入力してください。\n鍵を取り出したら「閉」ボタンを押して扉を閉めてください。`}
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => saveGuide(p.id)}
+                      className="flex-1 rounded-xl bg-blue-600 text-white py-2.5 text-sm font-bold"
+                    >
+                      保存
+                    </button>
+                    <button
+                      onClick={() => setEditingGuideId(null)}
+                      className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm"
+                    >
+                      キャンセル
+                    </button>
+                  </div>
+                </div>
+              ) : p.checkin_guide ? (
+                <p className="text-xs text-slate-500 bg-slate-50 rounded-xl px-3 py-2 line-clamp-2 whitespace-pre-wrap">
+                  {p.checkin_guide}
+                </p>
+              ) : (
+                <p className="text-xs text-amber-500">案内文が未設定です</p>
+              )}
             </div>
           ))}
         </div>
@@ -2030,12 +2106,644 @@ function LoginPage() {
   );
 }
 
+// ── 自動チェックインページ ────────────────────────────────────────────────────
+
+function CheckinPage() {
+  const params = new URLSearchParams(window.location.search);
+  const propertyFromUrl = params.get("property") || "";
+
+  // phase: select_property | guide | verify | no_booking | form | done
+  const [phase, setPhase] = useState(propertyFromUrl ? "guide" : "select_property");
+  const [selectedProperty, setSelectedProperty] = useState(propertyFromUrl);
+  const [allProperties, setAllProperties] = useState([]);
+  const [guide, setGuide] = useState(null); // null=読込中, ""=未設定
+  const [guestInput, setGuestInput] = useState("");
+  const [booking, setBooking] = useState(null);
+  const [keyInfo, setKeyInfo] = useState({ key_code: null, key_note: null });
+  const [guestForm, setGuestForm] = useState({
+    guest_name: "", guest_name_kana: "", guest_address: "",
+    guest_phone: "", guest_nationality: "日本", passport_number: "", guest_count: 1,
+  });
+  const [verifyError, setVerifyError] = useState("");
+  const [formError, setFormError] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  // 物件一覧（物件選択ステップ用）
+  useEffect(() => {
+    if (propertyFromUrl) return;
+    fetch(`${API_BASE}/properties`)
+      .then((r) => r.json())
+      .then((d) => setAllProperties(d.properties || []));
+  }, []);
+
+  // 物件が決まったら案内文を取得
+  useEffect(() => {
+    if (!selectedProperty) return;
+    setGuide(null);
+    fetch(`${API_BASE}/checkin/guide?property_name=${encodeURIComponent(selectedProperty)}`)
+      .then((r) => r.json())
+      .then((d) => setGuide(d.checkin_guide || ""))
+      .catch(() => setGuide(""));
+  }, [selectedProperty]);
+
+  function proceedWithProperty(propName) {
+    setSelectedProperty(propName);
+    setPhase("guide");
+  }
+
+  async function verifyIdentity() {
+    if (!guestInput.trim()) { setVerifyError("お名前または予約番号を入力してください"); return; }
+    setVerifying(true); setVerifyError("");
+    try {
+      const res = await fetch(`${API_BASE}/checkin/verify-identity`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          property_name: selectedProperty,
+          guest_input: guestInput.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (res.status === 404) { setPhase("no_booking"); return; }
+      if (!res.ok) { setVerifyError(data.detail || "照合に失敗しました"); return; }
+      setBooking(data.booking);
+      setGuestForm((f) => ({
+        ...f,
+        guest_name: data.booking?.guest_name || "",
+        guest_count: data.booking?.guest_count || 1,
+      }));
+      setPhase("form");
+    } catch {
+      setVerifyError("通信エラーが発生しました");
+    } finally {
+      setVerifying(false);
+    }
+  }
+
+  async function submitCheckin() {
+    if (!guestForm.guest_name.trim()) { setFormError("お名前を入力してください"); return; }
+    if (!guestForm.guest_address.trim()) { setFormError("住所を入力してください"); return; }
+    if (guestForm.guest_nationality !== "日本" && !guestForm.passport_number.trim()) {
+      setFormError("外国籍の方はパスポート番号を入力してください"); return;
+    }
+    setSubmitting(true); setFormError("");
+    try {
+      const res = await fetch(`${API_BASE}/checkin/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...booking, ...guestForm }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setFormError(data.detail || "エラーが発生しました"); return; }
+      setKeyInfo({ key_code: data.key_code, key_note: data.key_note });
+      setPhase("done");
+    } catch {
+      setFormError("通信エラーが発生しました");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-white text-slate-900 flex justify-center">
+      <div className="w-full max-w-[430px] min-h-screen border-x border-slate-200 flex flex-col">
+        <header className="sticky top-0 z-10 bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-3">
+          {phase !== "select_property" && (
+            <button onClick={() => setPhase("select_property")} className="text-slate-400 text-lg leading-none">←</button>
+          )}
+          <div>
+            <h1 className="font-bold text-lg">チェックイン</h1>
+            {selectedProperty && <p className="text-xs text-slate-500">{selectedProperty}</p>}
+          </div>
+        </header>
+
+        <main className="flex-1 px-4 py-6 space-y-5">
+
+          {/* ── 物件選択（URL に property なしでアクセスした場合） ── */}
+          {phase === "select_property" && (
+            <div className="space-y-4">
+              <div>
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">物件を選択</p>
+                <p className="font-bold text-xl mt-1">チェックイン手続き</p>
+              </div>
+              {allProperties.length === 0 ? (
+                <p className="text-sm text-slate-400 py-6 text-center">読み込み中...</p>
+              ) : (
+                <div className="space-y-2">
+                  {allProperties.map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => proceedWithProperty(p.name)}
+                      className="w-full text-left rounded-2xl border border-slate-200 px-5 py-4 hover:bg-slate-50 transition flex items-center justify-between"
+                    >
+                      <span className="font-medium">{p.name}</span>
+                      <span className="text-slate-400">→</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── STEP 1: チェックイン方法の案内 ── */}
+          {phase === "guide" && (
+            <div className="space-y-5">
+              {guide === null ? (
+                <div className="flex items-center justify-center py-20 text-slate-400 text-sm">読み込み中...</div>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">チェックイン方法</p>
+                    <h2 className="text-xl font-bold text-slate-800">{selectedProperty}</h2>
+                  </div>
+
+                  {guide ? (
+                    <div className="rounded-2xl bg-slate-50 border border-slate-200 p-5">
+                      <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{guide}</p>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
+                      チェックイン案内が設定されていません。スタッフにお問い合わせください。
+                    </div>
+                  )}
+
+                  <button
+                    onClick={() => setPhase("verify")}
+                    className="w-full rounded-xl bg-slate-900 text-white py-3.5 font-bold text-sm"
+                  >
+                    確認しました
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── STEP 2: 本人確認 ── */}
+          {phase === "verify" && (
+            <div className="space-y-5">
+              <div className="rounded-2xl bg-slate-50 border border-slate-200 p-5 space-y-1">
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">ご予約の確認</p>
+                <p className="font-bold mt-1">{selectedProperty}</p>
+                <p className="text-xs text-slate-500">本日チェックインのご予約と照合します</p>
+              </div>
+
+              <div>
+                <label className="text-sm font-bold">
+                  予約者のお名前 <span className="text-slate-400 font-normal text-xs">または予約番号</span>
+                </label>
+                <input
+                  value={guestInput}
+                  onChange={(e) => setGuestInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && verifyIdentity()}
+                  className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3.5 text-sm outline-none"
+                  placeholder="例：山田 太郎"
+                  autoFocus
+                />
+                <p className="text-xs text-slate-400 mt-1.5">
+                  予約時のお名前（英語表記も可）または予約番号を入力してください
+                </p>
+              </div>
+
+              {verifyError && (
+                <div className="rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+                  {verifyError}
+                </div>
+              )}
+
+              <button
+                onClick={verifyIdentity}
+                disabled={verifying}
+                className="w-full rounded-xl bg-slate-900 text-white py-3.5 font-bold text-sm disabled:opacity-50"
+              >
+                {verifying ? "確認中..." : "予約を確認する"}
+              </button>
+            </div>
+          )}
+
+          {/* ── 予約なし ── */}
+          {phase === "no_booking" && (
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-center space-y-2">
+                <div className="text-3xl">📋</div>
+                <p className="font-bold text-amber-700">本日のご予約が見つかりません</p>
+                <p className="text-sm text-amber-600">
+                  {selectedProperty} の本日チェックイン予約が確認できませんでした。
+                </p>
+                <p className="text-xs text-amber-500">お心当たりがある場合はスタッフへご連絡ください。</p>
+              </div>
+              <button onClick={() => setPhase("verify")} className="w-full text-sm text-blue-600 underline">
+                もう一度試す
+              </button>
+            </div>
+          )}
+
+          {/* ── STEP 3: 宿泊者名簿 ── */}
+          {phase === "form" && booking && (
+            <div className="space-y-4">
+              <div className="rounded-2xl bg-emerald-50 border border-emerald-200 p-4 text-sm flex items-center gap-3">
+                <span className="text-emerald-600 font-bold text-lg">✓</span>
+                <div>
+                  <p className="font-bold text-emerald-700">ご予約を確認しました</p>
+                  <p className="text-emerald-600 text-xs mt-0.5">
+                    {booking.checkin_date} 〜 {booking.checkout_date}
+                  </p>
+                </div>
+              </div>
+
+              <p className="text-sm font-bold text-slate-700">宿泊者情報をご入力ください</p>
+              {[
+                { key: "guest_name", label: "お名前", required: true, placeholder: "例：山田 太郎" },
+                { key: "guest_name_kana", label: "フリガナ", placeholder: "例：ヤマダ タロウ" },
+                { key: "guest_address", label: "住所", required: true, placeholder: "例：福岡県福岡市博多区..." },
+                { key: "guest_phone", label: "電話番号", placeholder: "例：090-1234-5678" },
+              ].map(({ key, label, required, placeholder }) => (
+                <div key={key}>
+                  <label className="text-xs font-bold text-slate-600">
+                    {label} {required && <span className="text-red-500">*</span>}
+                  </label>
+                  <input
+                    value={guestForm[key]}
+                    onChange={(e) => setGuestForm({ ...guestForm, [key]: e.target.value })}
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+                    placeholder={placeholder}
+                  />
+                </div>
+              ))}
+              <div>
+                <label className="text-xs font-bold text-slate-600">国籍</label>
+                <select value={guestForm.guest_nationality}
+                  onChange={(e) => setGuestForm({ ...guestForm, guest_nationality: e.target.value })}
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none bg-white">
+                  <option value="日本">日本</option>
+                  <option value="その他">その他（外国籍）</option>
+                </select>
+              </div>
+              {guestForm.guest_nationality !== "日本" && (
+                <div>
+                  <label className="text-xs font-bold text-slate-600">パスポート番号 <span className="text-red-500">*</span></label>
+                  <input value={guestForm.passport_number}
+                    onChange={(e) => setGuestForm({ ...guestForm, passport_number: e.target.value })}
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+                    placeholder="例：TK1234567" />
+                </div>
+              )}
+              <div>
+                <label className="text-xs font-bold text-slate-600">宿泊人数</label>
+                <input type="number" min="1" value={guestForm.guest_count}
+                  onChange={(e) => setGuestForm({ ...guestForm, guest_count: parseInt(e.target.value) || 1 })}
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none" />
+              </div>
+
+              {formError && (
+                <div className="rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+                  {formError}
+                </div>
+              )}
+              <button onClick={submitCheckin} disabled={submitting}
+                className="w-full rounded-xl bg-blue-600 text-white py-3.5 font-bold text-sm disabled:opacity-50">
+                {submitting ? "処理中..." : "チェックインする"}
+              </button>
+            </div>
+          )}
+
+          {/* ── STEP 4: 完了・キーコード表示 ── */}
+          {phase === "done" && (
+            <div className="space-y-5">
+              <div className="text-center space-y-2 py-4">
+                <div className="text-4xl">✓</div>
+                <p className="text-xl font-bold text-emerald-700">チェックイン完了</p>
+                <p className="text-sm text-slate-500">ご宿泊ありがとうございます</p>
+              </div>
+
+              {keyInfo.key_code ? (
+                <div className="rounded-2xl border-2 border-blue-200 bg-blue-50 p-6 text-center space-y-3">
+                  <p className="text-xs font-bold text-blue-500 uppercase tracking-widest">鍵の受け取りコード</p>
+                  <p className="text-5xl font-bold tracking-widest text-blue-800">{keyInfo.key_code}</p>
+                  {keyInfo.key_note && <p className="text-sm text-blue-600">{keyInfo.key_note}</p>}
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700 text-center">
+                  キーコードが未登録です。スタッフにお問い合わせください。
+                </div>
+              )}
+
+              {booking && (
+                <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4 space-y-2 text-sm">
+                  {[
+                    ["チェックイン", booking.checkin_date],
+                    ["チェックアウト", booking.checkout_date],
+                  ].filter(([, v]) => v).map(([label, value]) => (
+                    <div key={label} className="flex justify-between">
+                      <span className="text-slate-500">{label}</span>
+                      <span className="font-medium">{value}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <p className="text-xs text-slate-400 text-center">
+                ご不明な点はゲストサポートチャットへお問い合わせください。
+              </p>
+            </div>
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+// ── 本日のチェックイン ────────────────────────────────────────────────────────
+
+function TodayCheckinsSection() {
+  const [checkins, setCheckins] = useState([]);
+  const [date, setDate] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  async function load() {
+    setLoading(true); setError("");
+    try {
+      const res = await authFetch(`${API_BASE}/admin/checkin/today`);
+      const data = await res.json();
+      if (!res.ok) { setError(data.detail || "取得に失敗しました"); return; }
+      setCheckins(data.checkins || []);
+      setDate(data.date || "");
+    } catch {
+      setError("通信エラーが発生しました");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  const noKey = checkins.filter((c) => !c.key_code);
+  const withKey = checkins.filter((c) => c.key_code);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="font-bold text-lg">本日のチェックイン</h2>
+          {date && <p className="text-xs text-slate-500">{date} ／ {checkins.length}件</p>}
+        </div>
+        <button onClick={load} className="rounded-xl border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50">
+          更新
+        </button>
+      </div>
+
+      {loading && <p className="text-sm text-slate-400 py-6 text-center">Beds24から取得中...</p>}
+      {error && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-4 py-3">{error}</p>}
+
+      {!loading && !error && checkins.length === 0 && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-400 text-sm">
+          本日のチェックイン予約はありません
+        </div>
+      )}
+
+      {noKey.length > 0 && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 flex items-center gap-2">
+          <span className="font-bold">⚠</span>
+          キーコード未登録の部屋が {noKey.length} 件あります —
+          {noKey.map((c) => `${c.property_name} ${c.room_number}`).join("、")}
+        </div>
+      )}
+
+      <div className="grid gap-3">
+        {checkins.map((c, i) => (
+          <div key={i} className={`bg-white rounded-2xl border p-5 ${c.key_code ? "border-slate-200" : "border-amber-200"}`}>
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="font-bold text-slate-800">
+                  {c.property_name} {c.room_number && `${c.room_number}号室`}
+                </div>
+                <div className="text-sm text-slate-500 mt-0.5">
+                  {c.guest_name || "氏名不明"} ／ {c.guest_count}名
+                </div>
+                <div className="text-xs text-slate-400 mt-1">
+                  {c.checkin_date} 〜 {c.checkout_date} ／ 予約番号：{c.booking_id || "-"}
+                </div>
+              </div>
+              <div className="shrink-0 text-right">
+                {c.key_code ? (
+                  <div className="rounded-xl bg-blue-50 border border-blue-200 px-4 py-2 text-center">
+                    <p className="text-xs text-blue-500 font-bold">キーコード</p>
+                    <p className="text-2xl font-bold tracking-widest text-blue-800">{c.key_code}</p>
+                    {c.key_note && <p className="text-xs text-blue-400 mt-0.5">{c.key_note}</p>}
+                  </div>
+                ) : (
+                  <span className="text-xs text-amber-600 border border-amber-200 bg-amber-50 rounded-xl px-3 py-1.5">
+                    コード未登録
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="mt-3 pt-3 border-t border-slate-100">
+              <p className="text-xs text-slate-400 break-all">
+                物件QR URL：
+                <span className="font-mono text-slate-600 ml-1">
+                  /checkin?property={encodeURIComponent(c.property_name)}
+                </span>
+              </p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── キーコード管理セクション ───────────────────────────────────────────────────
+
+function KeyCodeSection() {
+  const [keyCodes, setKeyCodes] = useState([]);
+  const [properties, setProperties] = useState([]);
+  const [form, setForm] = useState({ property_name: "", room_number: "", code: "", note: "" });
+  const [editing, setEditing] = useState(null);
+
+  async function load() {
+    const [kcRes, propRes] = await Promise.all([
+      authFetch(`${API_BASE}/admin/key-codes`),
+      fetch(`${API_BASE}/properties`),
+    ]);
+    const kcData = await kcRes.json();
+    const propData = await propRes.json();
+    setKeyCodes(kcData.key_codes || []);
+    setProperties(propData.properties || []);
+  }
+
+  async function save() {
+    if (!form.property_name || !form.room_number || !form.code) {
+      alert("物件・部屋番号・キーコードを入力してください"); return;
+    }
+    if (editing) {
+      await authFetch(`${API_BASE}/admin/key-codes/${editing}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form),
+      });
+    } else {
+      await authFetch(`${API_BASE}/admin/key-codes`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form),
+      });
+    }
+    setForm({ property_name: "", room_number: "", code: "", note: "" });
+    setEditing(null);
+    load();
+  }
+
+  async function remove(id) {
+    if (!confirm("このキーコードを削除しますか？")) return;
+    await authFetch(`${API_BASE}/admin/key-codes/${id}`, { method: "DELETE" });
+    load();
+  }
+
+  function startEdit(k) {
+    setEditing(k.id);
+    setForm({ property_name: k.property_name, room_number: k.room_number, code: k.code, note: k.note || "" });
+  }
+
+  useEffect(() => { load(); }, []);
+
+  return (
+    <div className="grid grid-cols-12 gap-4">
+      <section className="col-span-12 lg:col-span-4 bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+        <h2 className="font-bold text-lg mb-4">{editing ? "キーコードを編集" : "キーコードを追加"}</h2>
+        <div className="space-y-3">
+          <div>
+            <label className="text-sm font-bold">物件名 <span className="text-red-500">*</span></label>
+            <select value={form.property_name} onChange={(e) => setForm({ ...form, property_name: e.target.value })}
+              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none bg-white">
+              <option value="">選択してください</option>
+              {properties.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-sm font-bold">部屋番号 <span className="text-red-500">*</span></label>
+            <input value={form.room_number} onChange={(e) => setForm({ ...form, room_number: e.target.value })}
+              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none" placeholder="例：101" />
+          </div>
+          <div>
+            <label className="text-sm font-bold">キーコード <span className="text-red-500">*</span></label>
+            <input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })}
+              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none font-mono" placeholder="例：1234" />
+          </div>
+          <div>
+            <label className="text-sm font-bold">補足メモ</label>
+            <input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })}
+              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none" placeholder="例：玄関ドア用" />
+          </div>
+          <div className="flex gap-2">
+            <button onClick={save} className="flex-1 rounded-xl bg-blue-600 text-white py-3 font-bold text-sm">
+              {editing ? "更新" : "追加"}
+            </button>
+            {editing && (
+              <button onClick={() => { setEditing(null); setForm({ property_name: "", room_number: "", code: "", note: "" }); }}
+                className="rounded-xl border border-slate-300 px-4 py-3 text-sm">
+                キャンセル
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="col-span-12 lg:col-span-8 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="p-5 border-b border-slate-200">
+          <h2 className="font-bold text-lg">キーコード一覧</h2>
+          <p className="text-xs text-slate-500">物件・部屋番号でチェックイン時に自動表示されます</p>
+        </div>
+        <div className="divide-y divide-slate-200">
+          {keyCodes.length === 0 && <div className="p-6 text-sm text-slate-500">キーコードが登録されていません。</div>}
+          {keyCodes.map((k) => (
+            <div key={k.id} className="px-5 py-4 flex items-center justify-between gap-4">
+              <div>
+                <div className="font-medium">{k.property_name} <span className="text-slate-400">—</span> {k.room_number}号室</div>
+                <div className="font-mono text-lg font-bold text-blue-700 mt-0.5">{k.code}</div>
+                {k.note && <div className="text-xs text-slate-500 mt-0.5">{k.note}</div>}
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <button onClick={() => startEdit(k)} className="rounded-xl border border-slate-200 px-3 py-2 text-sm">編集</button>
+                <button onClick={() => remove(k.id)} className="rounded-xl border border-red-200 text-red-600 px-3 py-2 text-sm">削除</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+// ── 宿泊者名簿セクション ──────────────────────────────────────────────────────
+
+function CheckinRecordsSection() {
+  const [records, setRecords] = useState([]);
+  const [expandedId, setExpandedId] = useState(null);
+
+  async function load() {
+    const res = await authFetch(`${API_BASE}/admin/checkin-records`);
+    const data = await res.json();
+    setRecords(data.checkin_records || []);
+  }
+
+  useEffect(() => { load(); }, []);
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+      <div className="p-5 border-b border-slate-200 flex items-center justify-between">
+        <div>
+          <h2 className="font-bold text-lg">宿泊者名簿</h2>
+          <p className="text-xs text-slate-500">チェックイン済みゲストの記録（{records.length}件）</p>
+        </div>
+      </div>
+      <div className="divide-y divide-slate-200">
+        {records.length === 0 && <div className="p-6 text-sm text-slate-500">まだチェックイン記録がありません。</div>}
+        {records.map((r) => (
+          <div key={r.id}>
+            <button
+              onClick={() => setExpandedId(expandedId === r.id ? null : r.id)}
+              className="w-full px-5 py-4 flex items-start justify-between gap-4 hover:bg-slate-50 text-left"
+            >
+              <div className="min-w-0">
+                <div className="font-medium">{r.property_name} {r.room_number && `${r.room_number}号室`}</div>
+                <div className="text-sm text-slate-600 mt-0.5">{r.guest_name}</div>
+                <div className="text-xs text-slate-400 mt-1">
+                  {r.checkin_date} 〜 {r.checkout_date || "-"} / {r.guest_count}名
+                </div>
+              </div>
+              <div className="text-xs text-slate-400 shrink-0">
+                {new Date(r.created_at).toLocaleDateString("ja-JP")}
+              </div>
+            </button>
+            {expandedId === r.id && (
+              <div className="px-5 py-4 bg-slate-50 border-t border-slate-100 grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                {[
+                  ["予約番号", r.booking_id || "-"],
+                  ["フリガナ", r.guest_name_kana || "-"],
+                  ["住所", r.guest_address || "-"],
+                  ["電話番号", r.guest_phone || "-"],
+                  ["国籍", r.guest_nationality || "-"],
+                  ["パスポート", r.passport_number || "-"],
+                ].map(([label, value]) => (
+                  <div key={label}>
+                    <span className="text-slate-500 text-xs">{label}</span>
+                    <p className="font-medium">{value}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── ルーティング ───────────────────────────────────────────────────────────────
 
 function App() {
   if (window.location.pathname.startsWith("/login")) return <LoginPage />;
   if (window.location.pathname.startsWith("/templates")) return <TemplatePage />;
   if (window.location.pathname.startsWith("/operator")) return <OperatorPage />;
+  if (window.location.pathname.startsWith("/checkin")) return <CheckinPage />;
   return <GuestPage />;
 }
 

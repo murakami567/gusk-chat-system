@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from .database import Base, SessionLocal, engine
 import bcrypt as _bcrypt
 
-from .models import Category, ChatRoom, Message, MessageTemplate, Operator, Property, Setting
+from .models import Category, ChatRoom, CheckinRecord, KeyCode, Message, MessageTemplate, Operator, Property, Setting
 
 Base.metadata.create_all(bind=engine)
 
@@ -28,6 +28,10 @@ def _verify_password(password: str, hashed: str) -> bool:
     return _bcrypt.checkpw(password.encode(), hashed.encode())
 
 SECRET_KEY = os.getenv("SECRET_KEY", "changeme-set-SECRET_KEY-in-production")
+BEDS24_REFRESH_TOKEN = os.getenv("BEDS24_REFRESH_TOKEN", "")
+BEDS24_USER_ID = os.getenv("BEDS24_USER_ID", "")
+
+from datetime import date as _date
 
 # 既存テーブルへの列追加をカバーする起動時マイグレーション
 def _run_migrations():
@@ -39,6 +43,10 @@ def _run_migrations():
         conn.execute(text("""
             ALTER TABLE chat_rooms
             ADD COLUMN IF NOT EXISTS checkin_date VARCHAR
+        """))
+        conn.execute(text("""
+            ALTER TABLE properties
+            ADD COLUMN IF NOT EXISTS checkin_guide TEXT
         """))
         conn.commit()
 
@@ -97,6 +105,9 @@ class MessageRequest(BaseModel):
 class PropertyRequest(BaseModel):
     name: str
 
+class PropertyGuideRequest(BaseModel):
+    checkin_guide: str
+
 
 class SettingRequest(BaseModel):
     value: str
@@ -116,6 +127,40 @@ class TemplateRequest(BaseModel):
     is_emergency: str = "false"
     active: str = "true"
     parent_id: int | None = None
+
+
+class CheckinVerifyRequest(BaseModel):
+    booking_ref: str | None = None
+    guest_name: str | None = None
+    checkin_date: str | None = None
+
+
+class IdentityVerifyRequest(BaseModel):
+    property_name: str
+    room_number: str | None = None  # 省略時は物件全体から検索
+    guest_input: str  # ゲストが入力した名前 or 予約番号
+
+
+class CheckinSubmitRequest(BaseModel):
+    booking_id: str | None = None
+    property_name: str
+    room_number: str
+    checkin_date: str
+    checkout_date: str | None = None
+    guest_name: str
+    guest_name_kana: str | None = None
+    guest_address: str | None = None
+    guest_phone: str | None = None
+    guest_nationality: str | None = None
+    passport_number: str | None = None
+    guest_count: int = 1
+
+
+class KeyCodeRequest(BaseModel):
+    property_name: str
+    room_number: str
+    code: str
+    note: str | None = None
 
 
 class UpdateRoomInfoRequest(BaseModel):
@@ -247,6 +292,73 @@ def _send_escalation_email(
             server.sendmail(notify_from, [notify_to], msg.as_string())
     except Exception:
         pass
+
+
+def _get_beds24_access_token() -> str | None:
+    if not BEDS24_REFRESH_TOKEN:
+        return None
+    try:
+        params = {"token": BEDS24_REFRESH_TOKEN}
+        if BEDS24_USER_ID:
+            params["userId"] = BEDS24_USER_ID
+        url = "https://beds24.com/api/v2/authentication/token?" + urllib.parse.urlencode(params)
+        with urllib.request.urlopen(url, timeout=15) as resp:
+            return json.loads(resp.read()).get("token")
+    except Exception:
+        return None
+
+
+def _search_beds24_bookings(search: str | None = None, checkin_date: str | None = None) -> list:
+    token = _get_beds24_access_token()
+    if not token:
+        raise HTTPException(status_code=503, detail="Beds24が設定されていません（BEDS24_REFRESH_TOKEN）")
+
+    params: dict = {}
+    if search:
+        params["searchString"] = search
+    if checkin_date:
+        params["arrivalFrom"] = checkin_date
+        params["arrivalTo"] = checkin_date
+
+    query = urllib.parse.urlencode(params)
+    req = urllib.request.Request(
+        f"https://beds24.com/api/v2/bookings?{query}",
+        headers={"token": token},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read())
+            if isinstance(data, list):
+                return data
+            return data.get("bookings", []) if isinstance(data, dict) else []
+    except urllib.error.HTTPError as e:
+        raise HTTPException(status_code=e.code, detail=f"Beds24 APIエラー: {e.reason}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Beds24 接続エラー: {str(e)}")
+
+
+def _match_room(b_prop: str, b_room: str, prop: str, room: str) -> bool:
+    return b_prop.strip() == prop.strip() and b_room.strip() == room.strip()
+
+
+def _normalize_name(name: str) -> str:
+    return name.strip().lower().replace(" ", "").replace("　", "")
+
+
+def _parse_beds24_booking(b: dict) -> dict:
+    first = str(b.get("firstName") or b.get("guestFirstName") or "").strip()
+    last = str(b.get("lastName") or b.get("guestName") or "").strip()
+    full_name = f"{first} {last}".strip() if first or last else str(b.get("fullName") or "")
+    return {
+        "booking_id": str(b.get("id") or b.get("bookingId") or ""),
+        "property_name": str(b.get("propName") or b.get("propertyName") or ""),
+        "room_number": str(b.get("unitName") or b.get("roomName") or b.get("unitId") or ""),
+        "checkin_date": str(b.get("arrival") or b.get("firstNight") or ""),
+        "checkout_date": str(b.get("departure") or b.get("lastNight") or ""),
+        "guest_name": full_name,
+        "guest_count": int(b.get("numAdult") or b.get("adults") or 1),
+        "status": str(b.get("status") or ""),
+    }
 
 
 def require_auth(authorization: str = Header(None)) -> dict:
@@ -431,9 +543,33 @@ def delete_operator(operator_id: int, op: dict = Depends(require_admin)):
 def get_properties():
     db: Session = SessionLocal()
     props = db.query(Property).order_by(Property.name.asc()).all()
-    result = [{"id": p.id, "name": p.name, "created_at": p.created_at} for p in props]
+    result = [{"id": p.id, "name": p.name, "checkin_guide": p.checkin_guide, "created_at": p.created_at} for p in props]
     db.close()
     return {"properties": result}
+
+
+@app.get("/checkin/guide")
+def get_checkin_guide(property_name: str):
+    """ゲスト向け：物件のチェックイン案内文を返す"""
+    db: Session = SessionLocal()
+    prop = db.query(Property).filter(Property.name == property_name).first()
+    db.close()
+    if not prop:
+        raise HTTPException(status_code=404, detail="property not found")
+    return {"property_name": prop.name, "checkin_guide": prop.checkin_guide or ""}
+
+
+@app.patch("/properties/{property_id}/guide")
+def update_property_guide(property_id: int, data: PropertyGuideRequest, op: dict = Depends(require_auth)):
+    db: Session = SessionLocal()
+    prop = db.query(Property).filter(Property.id == property_id).first()
+    if not prop:
+        db.close()
+        raise HTTPException(status_code=404, detail="property not found")
+    prop.checkin_guide = data.checkin_guide
+    db.commit()
+    db.close()
+    return {"status": "ok"}
 
 
 @app.post("/properties")
@@ -914,3 +1050,243 @@ def delete_template(template_id: int, op: dict = Depends(require_auth)):
     db.commit()
     db.close()
     return {"status": "ok"}
+
+
+# ── 自動チェックイン ───────────────────────────────────────────────────────────
+
+@app.get("/checkin/today-booking")
+def get_today_booking(property_name: str, room_number: str):
+    """部屋QRコード用：今日のチェックイン予約の存在確認のみ（キーコードは返さない）"""
+    today = _date.today().isoformat()
+    bookings = _search_beds24_bookings(checkin_date=today)
+    active = [b for b in bookings if str(b.get("status", "")) not in ("-1", "cancelled", "2")]
+
+    matched = [
+        b for b in active
+        if _match_room(
+            str(b.get("propName") or b.get("propertyName") or ""),
+            str(b.get("unitName") or b.get("roomName") or b.get("unitId") or ""),
+            property_name, room_number,
+        )
+    ]
+
+    if not matched:
+        raise HTTPException(status_code=404, detail="本日のご予約が見つかりません")
+
+    return {"exists": True, "property_name": property_name, "room_number": room_number}
+
+
+@app.post("/checkin/verify-identity")
+def verify_identity(data: IdentityVerifyRequest):
+    """物件の本日チェックイン予約からゲストを照合し、一致した場合のみ予約情報を返す"""
+    today = _date.today().isoformat()
+    bookings = _search_beds24_bookings(checkin_date=today)
+    active = [b for b in bookings if str(b.get("status", "")) not in ("-1", "cancelled", "2")]
+
+    # 物件でフィルタ（部屋番号は任意）
+    property_matched = [
+        b for b in active
+        if str(b.get("propName") or b.get("propertyName") or "").strip() == data.property_name.strip()
+    ]
+    if data.room_number:
+        property_matched = [
+            b for b in property_matched
+            if str(b.get("unitName") or b.get("roomName") or b.get("unitId") or "").strip() == data.room_number.strip()
+        ]
+
+    if not property_matched:
+        raise HTTPException(status_code=404, detail="本日のご予約が見つかりません")
+
+    # 名前または予約番号で照合
+    normalized_input = _normalize_name(data.guest_input)
+    matched_booking = None
+    for b in property_matched:
+        parsed = _parse_beds24_booking(b)
+        name_match = normalized_input and (
+            normalized_input in _normalize_name(parsed["guest_name"])
+            or _normalize_name(parsed["guest_name"]) in normalized_input
+        )
+        ref_match = data.guest_input.strip() == parsed["booking_id"].strip()
+        if name_match or ref_match:
+            matched_booking = parsed
+            break
+
+    if not matched_booking:
+        raise HTTPException(
+            status_code=403,
+            detail="お名前が予約情報と一致しませんでした。ご確認の上、再度お試しください。",
+        )
+
+    return {"booking": matched_booking}
+
+
+@app.get("/admin/checkin/today")
+def get_admin_today_checkins(op: dict = Depends(require_auth)):
+    """管理者用：今日のチェックイン一覧＋各部屋のキーコード"""
+    today = _date.today().isoformat()
+    bookings = _search_beds24_bookings(checkin_date=today)
+    active = [b for b in bookings if str(b.get("status", "")) not in ("-1", "cancelled", "2")]
+    parsed = [_parse_beds24_booking(b) for b in active]
+
+    db: Session = SessionLocal()
+    result = []
+    for b in parsed:
+        key = (
+            db.query(KeyCode)
+            .filter(KeyCode.property_name == b["property_name"], KeyCode.room_number == b["room_number"])
+            .first()
+        )
+        result.append({**b, "key_code": key.code if key else None, "key_note": key.note if key else None})
+    db.close()
+
+    return {"date": today, "checkins": result}
+
+
+@app.post("/checkin/verify")
+def checkin_verify(data: CheckinVerifyRequest):
+    if not data.booking_ref and not data.guest_name:
+        raise HTTPException(status_code=400, detail="予約番号またはお名前を入力してください")
+
+    search = data.booking_ref or data.guest_name
+    bookings = _search_beds24_bookings(search=search, checkin_date=data.checkin_date)
+
+    # キャンセルを除外
+    active = [b for b in bookings if str(b.get("status", "")) not in ("-1", "cancelled", "2")]
+    if not active:
+        raise HTTPException(status_code=404, detail="予約が見つかりません。予約番号・お名前・日付をご確認ください。")
+
+    return {"bookings": [_parse_beds24_booking(b) for b in active[:5]]}
+
+
+@app.post("/checkin/submit")
+def checkin_submit(data: CheckinSubmitRequest):
+    db: Session = SessionLocal()
+    record = CheckinRecord(
+        booking_id=data.booking_id,
+        property_name=data.property_name,
+        room_number=data.room_number,
+        checkin_date=data.checkin_date,
+        checkout_date=data.checkout_date,
+        guest_name=data.guest_name,
+        guest_name_kana=data.guest_name_kana,
+        guest_address=data.guest_address,
+        guest_phone=data.guest_phone,
+        guest_nationality=data.guest_nationality,
+        passport_number=data.passport_number,
+        guest_count=data.guest_count,
+    )
+    db.add(record)
+    db.commit()
+
+    key = (
+        db.query(KeyCode)
+        .filter(KeyCode.property_name == data.property_name, KeyCode.room_number == data.room_number)
+        .first()
+    )
+    key_code = key.code if key else None
+    key_note = key.note if key else None
+    db.close()
+
+    return {
+        "status": "ok",
+        "key_code": key_code,
+        "key_note": key_note,
+        "checkin_date": data.checkin_date,
+        "checkout_date": data.checkout_date,
+    }
+
+
+# ── キーコード管理 ─────────────────────────────────────────────────────────────
+
+@app.get("/admin/key-codes")
+def list_key_codes(op: dict = Depends(require_auth)):
+    db: Session = SessionLocal()
+    codes = db.query(KeyCode).order_by(KeyCode.property_name, KeyCode.room_number).all()
+    result = [
+        {
+            "id": k.id,
+            "property_name": k.property_name,
+            "room_number": k.room_number,
+            "code": k.code,
+            "note": k.note,
+            "created_at": k.created_at,
+        }
+        for k in codes
+    ]
+    db.close()
+    return {"key_codes": result}
+
+
+@app.post("/admin/key-codes")
+def create_key_code(data: KeyCodeRequest, op: dict = Depends(require_auth)):
+    db: Session = SessionLocal()
+    key = KeyCode(
+        property_name=data.property_name,
+        room_number=data.room_number,
+        code=data.code,
+        note=data.note,
+    )
+    db.add(key)
+    db.commit()
+    db.refresh(key)
+    key_id = key.id
+    db.close()
+    return {"status": "ok", "id": key_id}
+
+
+@app.put("/admin/key-codes/{key_id}")
+def update_key_code(key_id: int, data: KeyCodeRequest, op: dict = Depends(require_auth)):
+    db: Session = SessionLocal()
+    key = db.query(KeyCode).filter(KeyCode.id == key_id).first()
+    if not key:
+        db.close()
+        raise HTTPException(status_code=404, detail="not found")
+    key.property_name = data.property_name
+    key.room_number = data.room_number
+    key.code = data.code
+    key.note = data.note
+    db.commit()
+    db.close()
+    return {"status": "ok"}
+
+
+@app.delete("/admin/key-codes/{key_id}")
+def delete_key_code(key_id: int, op: dict = Depends(require_auth)):
+    db: Session = SessionLocal()
+    key = db.query(KeyCode).filter(KeyCode.id == key_id).first()
+    if not key:
+        db.close()
+        raise HTTPException(status_code=404, detail="not found")
+    db.delete(key)
+    db.commit()
+    db.close()
+    return {"status": "ok"}
+
+
+# ── 宿泊者名簿（管理者向け） ──────────────────────────────────────────────────
+
+@app.get("/admin/checkin-records")
+def list_checkin_records(op: dict = Depends(require_auth)):
+    db: Session = SessionLocal()
+    records = db.query(CheckinRecord).order_by(CheckinRecord.id.desc()).all()
+    result = [
+        {
+            "id": r.id,
+            "booking_id": r.booking_id,
+            "property_name": r.property_name,
+            "room_number": r.room_number,
+            "checkin_date": r.checkin_date,
+            "checkout_date": r.checkout_date,
+            "guest_name": r.guest_name,
+            "guest_name_kana": r.guest_name_kana,
+            "guest_address": r.guest_address,
+            "guest_phone": r.guest_phone,
+            "guest_nationality": r.guest_nationality,
+            "passport_number": r.passport_number,
+            "guest_count": r.guest_count,
+            "created_at": r.created_at,
+        }
+        for r in records
+    ]
+    db.close()
+    return {"checkin_records": result}

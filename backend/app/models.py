@@ -9,6 +9,7 @@ class Property(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False, unique=True)
+    checkin_guide = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -78,4 +79,34 @@ class MessageTemplate(Base):
     is_emergency = Column(String, default="false")
     active = Column(String, default="true")
     parent_id = Column(Integer, ForeignKey("message_templates.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class KeyCode(Base):
+    __tablename__ = "key_codes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    property_name = Column(String, nullable=False)
+    room_number = Column(String, nullable=False)
+    code = Column(String, nullable=False)
+    note = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class CheckinRecord(Base):
+    __tablename__ = "checkin_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    booking_id = Column(String, nullable=True)
+    property_name = Column(String, nullable=False)
+    room_number = Column(String, nullable=False)
+    checkin_date = Column(String, nullable=False)
+    checkout_date = Column(String, nullable=True)
+    guest_name = Column(String, nullable=False)
+    guest_name_kana = Column(String, nullable=True)
+    guest_address = Column(String, nullable=True)
+    guest_phone = Column(String, nullable=True)
+    guest_nationality = Column(String, nullable=True)
+    passport_number = Column(String, nullable=True)
+    guest_count = Column(Integer, default=1)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
