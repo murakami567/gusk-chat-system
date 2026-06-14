@@ -1,7 +1,6 @@
 const PROPERTY_SELECT_API_BASE = "https://gusk-chat-system.onrender.com";
 let cachedTemplateProperties = [];
 let templatePropertiesLoaded = false;
-let isApplyingPropertyPatch = false;
 
 function cleanPropertyText(value) {
   return String(value || "").trim();
@@ -36,11 +35,11 @@ function buildPropertyOptions(properties) {
   const seen = new Set();
 
   properties.forEach((property) => {
-    const beds24Name = cleanPropertyText(property.beds24_property_name);
+    const propertyName = cleanPropertyText(property.name);
 
-    if (beds24Name && !seen.has(beds24Name)) {
-      seen.add(beds24Name);
-      options.push({ value: beds24Name, label: beds24Name });
+    if (propertyName && !seen.has(propertyName)) {
+      seen.add(propertyName);
+      options.push({ value: propertyName, label: propertyName });
     }
   });
 
