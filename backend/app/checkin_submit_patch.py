@@ -13,6 +13,22 @@ def ensure_checkin_record_columns(main_module):
         conn.commit()
 
 
+def normalize_key(value):
+    return str(value or "").strip().lower().replace(" ", "").replace("　", "")
+
+
+def find_key_code(db, main_module, property_name, room_number):
+    property_key = normalize_key(property_name)
+    room_key = normalize_key(room_number)
+
+    key_codes = db.query(main_module.KeyCode).all()
+    for item in key_codes:
+        if normalize_key(item.property_name) == property_key and normalize_key(item.room_number) == room_key:
+            return item
+
+    return None
+
+
 def install_checkin_submit_route(app, main_module):
     ensure_checkin_record_columns(main_module)
 
@@ -32,6 +48,8 @@ def install_checkin_submit_route(app, main_module):
     def submit_checkin(data: main_module.CheckinSubmitRequest):
         db = main_module.SessionLocal()
         record_id = None
+        key_code_value = None
+        key_note_value = None
 
         try:
             record = main_module.CheckinRecord(
@@ -52,7 +70,17 @@ def install_checkin_submit_route(app, main_module):
             db.commit()
             db.refresh(record)
             record_id = record.id
+
+            key_code = find_key_code(db, main_module, data.property_name, data.room_number)
+            if key_code:
+                key_code_value = key_code.code
+                key_note_value = key_code.note
         finally:
             db.close()
 
-        return {"status": "ok", "checkin_record_id": record_id}
+        return {
+            "status": "ok",
+            "checkin_record_id": record_id,
+            "key_code": key_code_value,
+            "key_note": key_note_value,
+        }
