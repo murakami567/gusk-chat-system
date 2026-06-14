@@ -37,6 +37,7 @@ def install_key_code_title_patch(app, main_module):
     remove_route(app, "/admin/key-codes", "GET")
     remove_route(app, "/admin/key-codes", "POST")
     remove_route(app, "/admin/key-codes/{key_id}", "PUT")
+    remove_route(app, "/admin/key-codes/batch", "POST")
 
     @app.get("/admin/key-codes")
     def list_key_codes(op: dict = Depends(main_module.require_auth)):
@@ -66,6 +67,44 @@ def install_key_code_title_patch(app, main_module):
         key_id = key.id
         db.close()
         return {"status": "ok", "id": key_id}
+
+    @app.post("/admin/key-codes/batch")
+    def save_key_code_batch(data: dict = Body(...), op: dict = Depends(main_module.require_auth)):
+        property_name = data.get("property_name")
+        room_number = data.get("room_number")
+        items = data.get("items") or []
+
+        if not property_name or not room_number:
+            raise HTTPException(status_code=400, detail="property_name and room_number are required")
+
+        valid_items = [item for item in items if item.get("code")]
+        if not valid_items:
+            raise HTTPException(status_code=400, detail="at least one code is required")
+
+        db = main_module.SessionLocal()
+        existing = db.query(main_module.KeyCode).filter(
+            main_module.KeyCode.property_name == property_name,
+            main_module.KeyCode.room_number == room_number,
+        ).all()
+        for key in existing:
+            db.delete(key)
+
+        ids = []
+        for item in valid_items:
+            key = main_module.KeyCode(
+                property_name=property_name,
+                room_number=room_number,
+                title=item.get("title") or "キーコード",
+                code=item.get("code"),
+                note=item.get("note"),
+            )
+            db.add(key)
+            db.flush()
+            ids.append(key.id)
+
+        db.commit()
+        db.close()
+        return {"status": "ok", "ids": ids}
 
     @app.put("/admin/key-codes/{key_id}")
     def update_key_code(key_id: int, data: dict = Body(...), op: dict = Depends(main_module.require_auth)):
