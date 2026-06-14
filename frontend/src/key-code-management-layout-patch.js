@@ -15,14 +15,25 @@ function kcValue(p) { return String(p.beds24_property_name || p.name || "").trim
 function kcRooms() { return [...new Set(kcState.codes.filter(k => k.property_name === kcState.property).map(k => k.room_number).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),"ja",{numeric:true})); }
 function kcItems(room) { return kcState.codes.filter(k => k.property_name === kcState.property && k.room_number === room).sort((a,b)=>(a.id||0)-(b.id||0)); }
 
+function kcCleanup() {
+  document.querySelector("[data-kc-ui]")?.remove();
+  document.querySelectorAll("[data-kc-original-hidden='true']").forEach((el) => {
+    el.style.display = "";
+    delete el.dataset.kcOriginalHidden;
+  });
+  kcState.editing = false;
+}
+
 function kcOriginal() {
-  const sections = [...document.querySelectorAll("section")];
+  const sections = [...document.querySelectorAll("section")].filter((s) => !s.closest("[data-kc-ui]"));
   const form = sections.find(s => s.textContent.includes("キーコードを追加") || s.textContent.includes("キーコードを編集"));
   const list = sections.find(s => s.textContent.includes("キーコード一覧"));
   if (!form || !list) return null;
-  const parent = form.parentElement;
-  if (!parent || parent.dataset.kcOriginalHidden === "true") return parent;
-  return parent;
+  return form.parentElement;
+}
+
+function kcIsKeyCodePage() {
+  return Boolean(kcOriginal());
 }
 
 async function kcLoad() {
@@ -89,8 +100,11 @@ function kcRender() {
 
 async function kcInstall() {
   if (kcState.loading) return;
-  const original = kcOriginal();
-  if (!original) return;
+  if (!kcIsKeyCodePage()) {
+    kcCleanup();
+    kcState.ready = false;
+    return;
+  }
   const root = document.querySelector("[data-kc-ui]");
   if (root && root.isConnected) return;
   kcState.loading = true;
