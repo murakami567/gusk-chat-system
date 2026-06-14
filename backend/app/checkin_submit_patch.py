@@ -1,4 +1,21 @@
+from sqlalchemy import text
+
+
+def ensure_checkin_record_columns(main_module):
+    with main_module.engine.connect() as conn:
+        conn.execute(text("ALTER TABLE checkin_records ADD COLUMN IF NOT EXISTS checkout_date VARCHAR"))
+        conn.execute(text("ALTER TABLE checkin_records ADD COLUMN IF NOT EXISTS guest_name_kana VARCHAR"))
+        conn.execute(text("ALTER TABLE checkin_records ADD COLUMN IF NOT EXISTS guest_address VARCHAR"))
+        conn.execute(text("ALTER TABLE checkin_records ADD COLUMN IF NOT EXISTS guest_phone VARCHAR"))
+        conn.execute(text("ALTER TABLE checkin_records ADD COLUMN IF NOT EXISTS guest_nationality VARCHAR"))
+        conn.execute(text("ALTER TABLE checkin_records ADD COLUMN IF NOT EXISTS passport_number VARCHAR"))
+        conn.execute(text("ALTER TABLE checkin_records ADD COLUMN IF NOT EXISTS guest_count INTEGER DEFAULT 1"))
+        conn.commit()
+
+
 def install_checkin_submit_route(app, main_module):
+    ensure_checkin_record_columns(main_module)
+
     def remove_route(path: str, method: str):
         app.router.routes = [
             route
