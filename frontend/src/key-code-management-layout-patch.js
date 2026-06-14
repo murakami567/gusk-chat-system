@@ -1,5 +1,5 @@
 const kcFetch = window.fetch.bind(window);
-let kcState = { ready: false, properties: [], codes: [], property: "", room: "", editing: false, items: [] };
+let kcState = { ready: false, loading: false, properties: [], codes: [], property: "", room: "", editing: false, items: [] };
 
 function kcHeaders() {
   const token = localStorage.getItem("op_token");
@@ -15,9 +15,13 @@ function kcRooms() { return [...new Set(kcState.codes.filter(k => k.property_nam
 function kcItems(room) { return kcState.codes.filter(k => k.property_name === kcState.property && k.room_number === room).sort((a,b)=>(a.id||0)-(b.id||0)); }
 
 function kcOriginal() {
-  const a = [...document.querySelectorAll("section")].find(s => s.textContent.includes("キーコードを追加") || s.textContent.includes("キーコードを編集"));
-  const b = [...document.querySelectorAll("section")].find(s => s.textContent.includes("キーコード一覧"));
-  return a && b ? a.parentElement : null;
+  const sections = [...document.querySelectorAll("section")];
+  const form = sections.find(s => s.textContent.includes("キーコードを追加") || s.textContent.includes("キーコードを編集"));
+  const list = sections.find(s => s.textContent.includes("キーコード一覧"));
+  if (!form || !list) return null;
+  const parent = form.parentElement;
+  if (!parent || parent.dataset.kcOriginalHidden === "true") return parent;
+  return parent;
 }
 
 async function kcLoad() {
@@ -65,6 +69,7 @@ function kcEditor() {
 function kcRender() {
   const original = kcOriginal(); if (!original) return;
   original.style.display = "none";
+  original.dataset.kcOriginalHidden = "true";
   let root = document.querySelector("[data-kc-ui]");
   if (!root) { root = document.createElement("div"); root.dataset.kcUi = "true"; original.parentElement.insertBefore(root, original.nextSibling); }
   const rooms = kcRooms();
@@ -82,13 +87,21 @@ function kcRender() {
 }
 
 async function kcInstall() {
-  if (!kcOriginal()) return;
-  if (!kcState.ready) { kcState.ready = true; await kcLoad(); }
-  kcRender();
+  if (kcState.loading) return;
+  const original = kcOriginal();
+  if (!original) return;
+  const root = document.querySelector("[data-kc-ui]");
+  if (root && root.isConnected) return;
+  kcState.loading = true;
+  try {
+    if (!kcState.ready) { kcState.ready = true; await kcLoad(); }
+    kcRender();
+  } finally {
+    kcState.loading = false;
+  }
 }
 
-const kcObserver = new MutationObserver(kcInstall);
-kcObserver.observe(document.body, { childList: true, subtree: true });
 kcInstall();
 setTimeout(kcInstall, 500);
 setTimeout(kcInstall, 1500);
+setInterval(kcInstall, 1500);
