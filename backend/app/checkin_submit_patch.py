@@ -35,7 +35,9 @@ def install_checkin_submit_route(app, main_module):
     @app.on_event("startup")
     def install_late_patches():
         from . import escalation_patch
+        from . import operator_reply_status_patch
         escalation_patch.install_escalation_patch(app, main_module)
+        operator_reply_status_patch.install_operator_reply_status_patch(app, main_module)
 
     def remove_route(path: str, method: str):
         app.router.routes = [
