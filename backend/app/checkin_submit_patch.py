@@ -32,6 +32,11 @@ def find_key_code(db, main_module, property_name, room_number):
 def install_checkin_submit_route(app, main_module):
     ensure_checkin_record_columns(main_module)
 
+    @app.on_event("startup")
+    def install_late_patches():
+        from . import escalation_patch
+        escalation_patch.install_escalation_patch(app, main_module)
+
     def remove_route(path: str, method: str):
         app.router.routes = [
             route
