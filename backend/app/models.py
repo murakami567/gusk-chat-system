@@ -89,6 +89,7 @@ class KeyCode(Base):
     id = Column(Integer, primary_key=True, index=True)
     property_name = Column(String, nullable=False)
     room_number = Column(String, nullable=False)
+    title = Column(String, nullable=True)
     code = Column(String, nullable=False)
     note = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
