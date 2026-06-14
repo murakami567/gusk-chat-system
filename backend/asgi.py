@@ -4,9 +4,11 @@ from fastapi import BackgroundTasks, HTTPException
 
 main_module = importlib.import_module("app.main")
 guard_module = importlib.import_module("app.security_message_guard")
+checkin_submit_patch = importlib.import_module("app.checkin_submit_patch")
 
 app = main_module.app
 guard_module.install_message_permission_guard(app, main_module.SECRET_KEY)
+checkin_submit_patch.install_checkin_submit_route(app, main_module)
 
 
 def _normalize_key(value: str | None) -> str:
