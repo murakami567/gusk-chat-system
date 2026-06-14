@@ -45,7 +45,7 @@ function buildPropertyOptions(properties) {
 
     if (guestName && !seen.has(guestName)) {
       seen.add(guestName);
-      options.push({ value: guestName, label: `${guestName}（ゲストURL）` });
+      options.push({ value: guestName, label: guestName });
     }
 
     if (beds24Name && beds24Name !== guestName && !seen.has(beds24Name)) {
@@ -69,7 +69,7 @@ function replacePropertySelectOptions(select, options) {
 
   const placeholder = document.createElement("option");
   placeholder.value = "";
-  placeholder.textContent = "ゲストURLの物件名を選択してください";
+  placeholder.textContent = "物件名を選択してください";
   select.appendChild(placeholder);
 
   options.forEach((item) => {
