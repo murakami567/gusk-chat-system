@@ -10,6 +10,7 @@ def ensure_checkin_record_columns(main_module):
         conn.execute(text("ALTER TABLE checkin_records ADD COLUMN IF NOT EXISTS guest_nationality VARCHAR"))
         conn.execute(text("ALTER TABLE checkin_records ADD COLUMN IF NOT EXISTS passport_number VARCHAR"))
         conn.execute(text("ALTER TABLE checkin_records ADD COLUMN IF NOT EXISTS guest_count INTEGER DEFAULT 1"))
+        conn.execute(text("ALTER TABLE key_codes ADD COLUMN IF NOT EXISTS title VARCHAR"))
         conn.commit()
 
 
@@ -17,16 +18,17 @@ def normalize_key(value):
     return str(value or "").strip().lower().replace(" ", "").replace("　", "")
 
 
-def find_key_code(db, main_module, property_name, room_number):
+def find_key_codes(db, main_module, property_name, room_number):
     property_key = normalize_key(property_name)
     room_key = normalize_key(room_number)
 
-    key_codes = db.query(main_module.KeyCode).all()
+    matched = []
+    key_codes = db.query(main_module.KeyCode).order_by(main_module.KeyCode.id.asc()).all()
     for item in key_codes:
         if normalize_key(item.property_name) == property_key and normalize_key(item.room_number) == room_key:
-            return item
+            matched.append(item)
 
-    return None
+    return matched
 
 
 def install_checkin_submit_route(app, main_module):
@@ -36,8 +38,10 @@ def install_checkin_submit_route(app, main_module):
     def install_late_patches():
         from . import escalation_patch
         from . import operator_reply_status_patch
+        from . import key_code_title_patch
         escalation_patch.install_escalation_patch(app, main_module)
         operator_reply_status_patch.install_operator_reply_status_patch(app, main_module)
+        key_code_title_patch.install_key_code_title_patch(app, main_module)
 
     def remove_route(path: str, method: str):
         app.router.routes = [
@@ -57,6 +61,7 @@ def install_checkin_submit_route(app, main_module):
         record_id = None
         key_code_value = None
         key_note_value = None
+        key_code_items = []
 
         try:
             record = main_module.CheckinRecord(
@@ -78,10 +83,20 @@ def install_checkin_submit_route(app, main_module):
             db.refresh(record)
             record_id = record.id
 
-            key_code = find_key_code(db, main_module, data.property_name, data.room_number)
-            if key_code:
-                key_code_value = key_code.code
-                key_note_value = key_code.note
+            key_codes = find_key_codes(db, main_module, data.property_name, data.room_number)
+            if key_codes:
+                first = key_codes[0]
+                key_code_value = first.code
+                key_note_value = first.note
+                key_code_items = [
+                    {
+                        "id": item.id,
+                        "title": getattr(item, "title", None) or "キーコード",
+                        "code": item.code,
+                        "note": item.note,
+                    }
+                    for item in key_codes
+                ]
         finally:
             db.close()
 
@@ -90,4 +105,5 @@ def install_checkin_submit_route(app, main_module):
             "checkin_record_id": record_id,
             "key_code": key_code_value,
             "key_note": key_note_value,
+            "key_codes": key_code_items,
         }
