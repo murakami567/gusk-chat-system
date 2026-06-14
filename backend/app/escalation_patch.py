@@ -22,9 +22,19 @@ def send_escalation_email(main_module, room_id, property_name, room_number, cate
     smtp_user = os.getenv("SMTP_USER")
     smtp_password = os.getenv("SMTP_PASSWORD")
     notify_from = os.getenv("NOTIFY_EMAIL_FROM", smtp_user)
-    notify_to = os.getenv("NOTIFY_EMAIL_TO", ESCALATION_NOTIFY_EMAIL) or ESCALATION_NOTIFY_EMAIL
+    notify_to = ESCALATION_NOTIFY_EMAIL
 
-    if not all([smtp_host, smtp_user, smtp_password, notify_from, notify_to]):
+    missing = [
+        name for name, value in {
+            "SMTP_HOST": smtp_host,
+            "SMTP_USER": smtp_user,
+            "SMTP_PASSWORD": smtp_password,
+            "NOTIFY_EMAIL_FROM": notify_from,
+        }.items()
+        if not value
+    ]
+    if missing:
+        print(f"[ESCALATION_EMAIL] skipped: missing env {', '.join(missing)}", flush=True)
         return
 
     body = (
@@ -42,12 +52,13 @@ def send_escalation_email(main_module, room_id, property_name, room_number, cate
     msg["To"] = notify_to
 
     try:
-        with smtplib.SMTP(smtp_host, smtp_port) as server:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
             server.starttls()
             server.login(smtp_user, smtp_password)
             server.sendmail(notify_from, [notify_to], msg.as_string())
-    except Exception:
-        pass
+        print(f"[ESCALATION_EMAIL] sent to {notify_to} room_id={room_id}", flush=True)
+    except Exception as e:
+        print(f"[ESCALATION_EMAIL] failed: {type(e).__name__}: {e}", flush=True)
 
 
 def remove_route(app, path: str, method: str):
