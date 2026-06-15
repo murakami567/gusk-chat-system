@@ -2576,10 +2576,23 @@ function TodayCheckinsSection() {
 // ── キーコード管理セクション ───────────────────────────────────────────────────
 
 function KeyCodeSection() {
+  
   const [keyCodes, setKeyCodes] = useState([]);
-  const [properties, setProperties] = useState([]);
-  const [form, setForm] = useState({ property_name: "", room_number: "", code: "", note: "" });
-  const [editing, setEditing] = useState(null);
+const [properties, setProperties] = useState([]);
+
+const [selectedProperty, setSelectedProperty] = useState("");
+
+const [editingRoom, setEditingRoom] = useState(null);
+
+const [roomNumber, setRoomNumber] = useState("");
+
+const [items, setItems] = useState([
+  {
+    title: "",
+    code: "",
+    note: "",
+  },
+]);
 
   async function load() {
     const [kcRes, propRes] = await Promise.all([
