@@ -1,7 +1,7 @@
 {
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "vite build",
+    "build": "node scripts/patch-main-key-code-section.cjs && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
