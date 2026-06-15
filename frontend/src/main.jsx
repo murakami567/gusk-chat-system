@@ -2576,134 +2576,392 @@ function TodayCheckinsSection() {
 // ── キーコード管理セクション ───────────────────────────────────────────────────
 
 function KeyCodeSection() {
-  
   const [keyCodes, setKeyCodes] = useState([]);
-const [properties, setProperties] = useState([]);
+  const [properties, setProperties] = useState([]);
+  const [selectedProperty, setSelectedProperty] = useState("");
+  const [editingRoom, setEditingRoom] = useState(null);
+  const [roomNumber, setRoomNumber] = useState("");
+  const [items, setItems] = useState([{ title: "", code: "", note: "" }]);
 
-const [selectedProperty, setSelectedProperty] = useState("");
+  function propertyValue(property) {
+    return (property.beds24_property_name || property.name || "").trim();
+  }
 
-const [editingRoom, setEditingRoom] = useState(null);
+  function propertyLabel(property) {
+    const value = propertyValue(property);
+    return {
+      value,
+      name: property.name || value,
+      beds24Name: property.beds24_property_name || "",
+    };
+  }
 
-const [roomNumber, setRoomNumber] = useState("");
+  function roomsFor(propertyName) {
+    return [
+      ...new Set(
+        keyCodes
+          .filter((key) => key.property_name === propertyName)
+          .map((key) => key.room_number)
+          .filter(Boolean)
+      ),
+    ].sort((a, b) => String(a).localeCompare(String(b), "ja", { numeric: true }));
+  }
 
-const [items, setItems] = useState([
-  {
-    title: "",
-    code: "",
-    note: "",
-  },
-]);
+  function codesFor(propertyName, room) {
+    return keyCodes
+      .filter((key) => key.property_name === propertyName && key.room_number === room)
+      .sort((a, b) => (a.id || 0) - (b.id || 0));
+  }
 
   async function load() {
-    const [kcRes, propRes] = await Promise.all([
+    const [keyRes, propertyRes] = await Promise.all([
       authFetch(`${API_BASE}/admin/key-codes`),
       fetch(`${API_BASE}/properties`),
     ]);
-    const kcData = await kcRes.json();
-    const propData = await propRes.json();
-    setKeyCodes(kcData.key_codes || []);
-    setProperties(propData.properties || []);
+
+    const keyData = await keyRes.json();
+    const propertyData = await propertyRes.json();
+    const nextProperties = propertyData.properties || [];
+
+    setKeyCodes(keyData.key_codes || []);
+    setProperties(nextProperties);
+
+    setSelectedProperty((current) => {
+      if (current) return current;
+      return nextProperties[0] ? propertyValue(nextProperties[0]) : "";
+    });
   }
 
-  async function save() {
-    if (!form.property_name || !form.room_number || !form.code) {
-      alert("物件・部屋番号・キーコードを入力してください"); return;
+  function openAddRoom() {
+    setEditingRoom(null);
+    setRoomNumber("");
+    setItems([{ title: "", code: "", note: "" }]);
+  }
+
+  function openEditRoom(room) {
+    const roomCodes = codesFor(selectedProperty, room);
+
+    setEditingRoom(room);
+    setRoomNumber(room);
+    setItems(
+      roomCodes.length > 0
+        ? roomCodes.map((key) => ({
+            title: key.title || "",
+            code: key.code || "",
+            note: key.note || "",
+          }))
+        : [{ title: "", code: "", note: "" }]
+    );
+  }
+
+  function closeEditor() {
+    setEditingRoom(null);
+    setRoomNumber("");
+    setItems([{ title: "", code: "", note: "" }]);
+  }
+
+  function updateItem(index, field, value) {
+    setItems((current) =>
+      current.map((item, i) => (i === index ? { ...item, [field]: value } : item))
+    );
+  }
+
+  function addItem() {
+    setItems((current) => [...current, { title: "", code: "", note: "" }]);
+  }
+
+  function removeItem(index) {
+    setItems((current) => {
+      const next = current.filter((_, i) => i !== index);
+      return next.length > 0 ? next : [{ title: "", code: "", note: "" }];
+    });
+  }
+
+  async function saveRoomCodes() {
+    const targetRoom = roomNumber.trim();
+
+    const validItems = items
+      .map((item) => ({
+        title: item.title.trim() || "キーコード",
+        code: item.code.trim(),
+        note: item.note.trim(),
+      }))
+      .filter((item) => item.code);
+
+    if (!selectedProperty) {
+      alert("物件を選択してください");
+      return;
     }
-    if (editing) {
-      await authFetch(`${API_BASE}/admin/key-codes/${editing}`, {
-        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form),
-      });
-    } else {
-      await authFetch(`${API_BASE}/admin/key-codes`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form),
-      });
+
+    if (!targetRoom) {
+      alert("部屋番号を入力してください");
+      return;
     }
-    setForm({ property_name: "", room_number: "", code: "", note: "" });
-    setEditing(null);
+
+    if (validItems.length === 0) {
+      alert("キーコードを1つ以上入力してください");
+      return;
+    }
+
+    const res = await authFetch(`${API_BASE}/admin/key-codes/batch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        property_name: selectedProperty,
+        room_number: targetRoom,
+        items: validItems,
+      }),
+    });
+
+    if (!res.ok) {
+      alert("保存に失敗しました");
+      return;
+    }
+
+    closeEditor();
+    await load();
+  }
+
+  useEffect(() => {
     load();
-  }
+  }, []);
 
-  async function remove(id) {
-    if (!confirm("このキーコードを削除しますか？")) return;
-    await authFetch(`${API_BASE}/admin/key-codes/${id}`, { method: "DELETE" });
-    load();
-  }
+  const selectedPropertyInfo = properties.find((property) => propertyValue(property) === selectedProperty);
+  const selectedLabel = selectedPropertyInfo
+    ? propertyLabel(selectedPropertyInfo)
+    : { value: selectedProperty, name: selectedProperty, beds24Name: "" };
 
-  function startEdit(k) {
-    setEditing(k.id);
-    setForm({ property_name: k.property_name, room_number: k.room_number, code: k.code, note: k.note || "" });
-  }
+  const rooms = roomsFor(selectedProperty);
 
-  useEffect(() => { load(); }, []);
+  const isEditorOpen =
+    editingRoom !== null ||
+    roomNumber !== "" ||
+    items.some((item) => item.title || item.code || item.note);
 
   return (
     <div className="grid grid-cols-12 gap-4">
-      <section className="col-span-12 lg:col-span-4 bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
-        <h2 className="font-bold text-lg mb-4">{editing ? "キーコードを編集" : "キーコードを追加"}</h2>
-        <div className="space-y-3">
-          <div>
-            <label className="text-sm font-bold">物件名 <span className="text-red-500">*</span></label>
-            <select value={form.property_name} onChange={(e) => setForm({ ...form, property_name: e.target.value })}
-              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none bg-white">
-              <option value="">選択してください</option>
-              {properties.map((p) => {
-                const val = p.beds24_property_name || p.name;
-                const label = p.beds24_property_name ? `${p.name}（${p.beds24_property_name}）` : p.name;
-                return <option key={p.id} value={val}>{label}</option>;
-              })}
-            </select>
-          </div>
-          <div>
-            <label className="text-sm font-bold">部屋番号 <span className="text-red-500">*</span></label>
-            <input value={form.room_number} onChange={(e) => setForm({ ...form, room_number: e.target.value })}
-              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none" placeholder="例：101" />
-          </div>
-          <div>
-            <label className="text-sm font-bold">キーコード <span className="text-red-500">*</span></label>
-            <input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })}
-              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none font-mono" placeholder="例：1234" />
-          </div>
-          <div>
-            <label className="text-sm font-bold">補足メモ</label>
-            <input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })}
-              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none" placeholder="例：玄関ドア用" />
-          </div>
-          <div className="flex gap-2">
-            <button onClick={save} className="flex-1 rounded-xl bg-blue-600 text-white py-3 font-bold text-sm">
-              {editing ? "更新" : "追加"}
-            </button>
-            {editing && (
-              <button onClick={() => { setEditing(null); setForm({ property_name: "", room_number: "", code: "", note: "" }); }}
-                className="rounded-xl border border-slate-300 px-4 py-3 text-sm">
-                キャンセル
+      <section className="col-span-12 lg:col-span-4 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="p-5 border-b border-slate-200">
+          <h2 className="font-bold text-lg">物件一覧</h2>
+          <p className="text-xs text-slate-500">物件管理に登録された物件と連動</p>
+        </div>
+
+        <div className="p-3 space-y-2 max-h-[70vh] overflow-y-auto">
+          {properties.length === 0 && (
+            <div className="p-6 text-sm text-slate-400 text-center">
+              物件管理に物件がありません
+            </div>
+          )}
+
+          {properties.map((property) => {
+            const label = propertyLabel(property);
+            const active = selectedProperty === label.value;
+            const roomCount = roomsFor(label.value).length;
+
+            return (
+              <button
+                key={property.id}
+                type="button"
+                onClick={() => {
+                  setSelectedProperty(label.value);
+                  closeEditor();
+                }}
+                className={`w-full text-left rounded-2xl border px-4 py-3 transition ${
+                  active
+                    ? "bg-slate-900 text-white border-slate-900"
+                    : "bg-white border-slate-200 hover:bg-slate-50"
+                }`}
+              >
+                <div className="font-bold text-sm">{label.name}</div>
+
+                {label.beds24Name && label.beds24Name !== label.name && (
+                  <div className={`text-xs mt-0.5 ${active ? "text-slate-300" : "text-slate-400"}`}>
+                    Beds24: {label.beds24Name}
+                  </div>
+                )}
+
+                <div className={`text-xs mt-1 ${active ? "text-slate-300" : "text-slate-400"}`}>
+                  {roomCount}部屋
+                </div>
               </button>
-            )}
-          </div>
+            );
+          })}
         </div>
       </section>
 
       <section className="col-span-12 lg:col-span-8 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="p-5 border-b border-slate-200">
-          <h2 className="font-bold text-lg">キーコード一覧</h2>
-          <p className="text-xs text-slate-500">物件・部屋番号でチェックイン時に自動表示されます</p>
+        <div className="p-5 border-b border-slate-200 flex items-start justify-between gap-4">
+          <div>
+            <h2 className="font-bold text-lg">{selectedLabel.name || "部屋一覧"}</h2>
+
+            {selectedLabel.beds24Name && selectedLabel.beds24Name !== selectedLabel.name && (
+              <p className="text-xs text-slate-500 mt-1">
+                Beds24表示名：{selectedLabel.beds24Name}
+              </p>
+            )}
+
+            <p className="text-xs text-slate-500 mt-1">
+              部屋をタップして編集できます
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={openAddRoom}
+            className="rounded-xl bg-blue-600 text-white px-4 py-2.5 text-sm font-bold"
+          >
+            ＋ 部屋を追加
+          </button>
         </div>
-        <div className="divide-y divide-slate-200">
-          {keyCodes.length === 0 && <div className="p-6 text-sm text-slate-500">キーコードが登録されていません。</div>}
-          {keyCodes.map((k) => (
-            <div key={k.id} className="px-5 py-4 flex items-center justify-between gap-4">
-              <div>
-                <div className="font-medium">{k.property_name} <span className="text-slate-400">—</span> {k.room_number}号室</div>
-                <div className="font-mono text-lg font-bold text-blue-700 mt-0.5">{k.code}</div>
-                {k.note && <div className="text-xs text-slate-500 mt-0.5">{k.note}</div>}
-              </div>
-              <div className="flex gap-2 shrink-0">
-                <button onClick={() => startEdit(k)} className="rounded-xl border border-slate-200 px-3 py-2 text-sm">編集</button>
-                <button onClick={() => remove(k.id)} className="rounded-xl border border-red-200 text-red-600 px-3 py-2 text-sm">削除</button>
-              </div>
+
+        <div className="p-4 space-y-3 max-h-[70vh] overflow-y-auto">
+          {!selectedProperty && (
+            <div className="p-8 text-center text-sm text-slate-400">
+              左側から物件を選択してください
             </div>
-          ))}
+          )}
+
+          {selectedProperty && rooms.length === 0 && (
+            <div className="p-8 text-center text-sm text-slate-400">
+              まだ部屋が登録されていません
+            </div>
+          )}
+
+          {rooms.map((room) => {
+            const roomCodes = codesFor(selectedProperty, room);
+
+            return (
+              <button
+                key={room}
+                type="button"
+                onClick={() => openEditRoom(room)}
+                className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left hover:bg-slate-50 transition"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="font-bold text-slate-800">{room}号室</div>
+                    <div className="text-xs text-slate-400 mt-1">
+                      {roomCodes.length}件のキーコード
+                    </div>
+                  </div>
+
+                  <span className="text-xs text-blue-600 underline shrink-0">
+                    編集
+                  </span>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {roomCodes.map((keyCode) => (
+                    <span
+                      key={keyCode.id}
+                      className="rounded-full bg-blue-50 border border-blue-100 text-blue-700 px-2 py-1 text-xs"
+                    >
+                      {keyCode.title || "キーコード"}
+                    </span>
+                  ))}
+                </div>
+              </button>
+            );
+          })}
         </div>
       </section>
+
+      {isEditorOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4">
+          <div className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-3xl bg-white shadow-xl border border-slate-200 p-5 space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-bold">
+                  {editingRoom ? `${editingRoom}号室を編集` : "部屋を追加"}
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  同じ部屋の複数キーコードをまとめて保存できます
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={closeEditor}
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              >
+                閉じる
+              </button>
+            </div>
+
+            <div>
+              <label className="text-sm font-bold">
+                部屋番号 <span className="text-red-500">*</span>
+              </label>
+              <input
+                value={roomNumber}
+                onChange={(e) => setRoomNumber(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none"
+                placeholder="例：703"
+              />
+            </div>
+
+            <div className="space-y-3">
+              {items.map((item, index) => (
+                <div
+                  key={index}
+                  className="rounded-2xl border border-blue-100 bg-blue-50 p-3 space-y-2"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-blue-700">
+                      キーコード {index + 1}
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={() => removeItem(index)}
+                      className="text-xs text-red-600 underline"
+                    >
+                      削除
+                    </button>
+                  </div>
+
+                  <input
+                    value={item.title}
+                    onChange={(e) => updateItem(index, "title", e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none"
+                    placeholder="タイトル 例：エントランス キーボックス"
+                  />
+
+                  <input
+                    value={item.code}
+                    onChange={(e) => updateItem(index, "code", e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none font-mono"
+                    placeholder="コード 例：0731"
+                  />
+
+                  <input
+                    value={item.note}
+                    onChange={(e) => updateItem(index, "note", e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none"
+                    placeholder="備考 任意"
+                  />
+                </div>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={addItem}
+              className="w-full rounded-xl border border-blue-200 bg-blue-50 text-blue-700 py-3 text-sm font-bold"
+            >
+              ＋ キーコードを追加
+            </button>
+
+            <button
+              type="button"
+              onClick={saveRoomCodes}
+              className="w-full rounded-xl bg-blue-600 text-white py-3 text-sm font-bold"
+            >
+              保存する
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
