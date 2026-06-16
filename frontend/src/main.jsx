@@ -2640,26 +2640,28 @@ function KeyCodeSection() {
   }
 
   function openEditRoom(room) {
-    const roomCodes = codesFor(selectedProperty, room);
+  const roomCodes = codesFor(selectedProperty, room);
 
-    setEditingRoom(room);
-    setRoomNumber(room);
-    setItems(
-      roomCodes.length > 0
-        ? roomCodes.map((key) => ({
-            title: key.title || "",
-            code: key.code || "",
-            note: key.note || "",
-          }))
-        : [{ title: "", code: "", note: "" }]
-    );
-  }
+  setEditingRoom(room);
+  setRoomNumber(room);
+  setItems(
+    roomCodes.length > 0
+      ? roomCodes.map((key) => ({
+          title: key.title || "",
+          code: key.code || "",
+          note: key.note || "",
+        }))
+      : [{ title: "", code: "", note: "" }]
+  );
+  setEditorOpen(true);
+}
 
   function closeEditor() {
-    setEditingRoom(null);
-    setRoomNumber("");
-    setItems([{ title: "", code: "", note: "" }]);
-  }
+  setEditorOpen(false);
+  setEditingRoom(null);
+  setRoomNumber("");
+  setItems([{ title: "", code: "", note: "" }]);
+}
 
   function updateItem(index, field, value) {
     setItems((current) =>
@@ -2734,11 +2736,7 @@ function KeyCodeSection() {
 
   const rooms = roomsFor(selectedProperty);
 
-  const isEditorOpen =
-    editingRoom !== null ||
-    roomNumber !== "" ||
-    items.some((item) => item.title || item.code || item.note);
-
+  const isEditorOpen = editorOpen;
   return (
     <div className="grid grid-cols-12 gap-4">
       <section className="col-span-12 lg:col-span-4 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
