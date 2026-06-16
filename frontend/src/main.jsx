@@ -2583,6 +2583,7 @@ function KeyCodeSection() {
   const [editingRoom, setEditingRoom] = useState(null);
   const [roomNumber, setRoomNumber] = useState("");
   const [items, setItems] = useState([{ title: "", code: "", note: "" }]);
+  const [editorOpen, setEditorOpen] = useState(false);
 
   function propertyValue(property) {
     return (property.beds24_property_name || property.name || "").trim();
@@ -2737,6 +2738,7 @@ function KeyCodeSection() {
   const rooms = roomsFor(selectedProperty);
 
   const isEditorOpen = editorOpen;
+  
   return (
     <div className="grid grid-cols-12 gap-4">
       <section className="col-span-12 lg:col-span-4 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
