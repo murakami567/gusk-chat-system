@@ -2147,6 +2147,7 @@ function CheckinPage() {
   const [formError, setFormError] = useState("");
   const [verifying, setVerifying] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
 
   // 物件一覧（物件選択ステップ用）
   useEffect(() => {
